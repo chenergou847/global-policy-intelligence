@@ -2,6 +2,8 @@
 
 面向**企业管理层、公共事务、法务和财务团队**的全球政策与监管情报分析技能。
 
+样例参考：https://github.com/demo-global-policy-intelligence
+
 ## 能力概览
 
 用于分析国家、地区、省州、市县区层面的：
