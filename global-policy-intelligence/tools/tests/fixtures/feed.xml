@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Artemis - Reinsurance and ILS news</title>
+    <link>https://www.artemis.bm/</link>
+    <description>Reinsurance, catastrophe bonds and ILS</description>
+    <item>
+      <title>Catastrophe bond market hits record $52bn outstanding</title>
+      <link>https://www.artemis.bm/news/cat-bond-market-record-52bn/</link>
+      <pubDate>Tue, 15 Sep 2026 08:00:00 +0000</pubDate>
+      <description><![CDATA[<p>The catastrophe bond market reached a record level of outstanding issuance.</p>]]></description>
+    </item>
+    <item>
+      <title>Reinsurer capital adequacy under new regulatory framework</title>
+      <link>https://www.artemis.bm/news/reinsurer-capital-adequacy-framework/</link>
+      <pubDate>Fri, 11 Sep 2026 12:30:00 +0000</pubDate>
+      <description>Regulatory update for reinsurers.</description>
+    </item>
+    <item>
+      <title>Short</title>
+      <link>https://www.artemis.bm/news/x/</link>
+      <pubDate>Thu, 10 Sep 2026 09:00:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# 采集层运行产物（不应入库）
+global-policy-intelligence/evidence/
+global-policy-intelligence/tools/evals/.evidence/
+global-policy-intelligence/tools/evals/*.rendered
+global-policy-intelligence/tools/tests/.tmp/
+global-policy-intelligence/tools/tests/.diag/
+global-policy-intelligence/tools/tests/fixtures_site/
+
+# 本地配置与凭据（切勿入库）
+config.local.yaml
+*.local.yaml
+.env
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
