@@ -55,9 +55,58 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     return 0 if not missing else 2
 
 
+def _missing_required() -> list[str]:
+    """报告缺少的必需第三方依赖。
+
+    必须真正 import，而不是只用 importlib.util.find_spec：
+    find_spec 只负责「定位」模块文件，不执行它。若某模块文件存在但导入时
+    抛 ImportError（二进制不兼容、依赖缺失、影子文件等），find_spec 会说"在"，
+    而真实运行会崩——这就失去了提前检查的意义（实测踩到）。
+    """
+    import importlib
+
+    missing: list[str] = []
+    for mod in ("httpx", "lxml", "yaml"):
+        try:
+            importlib.import_module(mod)
+        except Exception:  # noqa: BLE001  ImportError / OSError / 二进制不兼容都算不可用
+            missing.append(mod)
+    return missing
+
+
+def _require_deps() -> int | None:
+    """缺依赖时给出可操作的提示，而不是抛裸 traceback。返回退出码或 None（可用）。"""
+    missing = _missing_required()
+    if not missing:
+        return None
+    # 导入名与 PyPI 发行名不一定相同（yaml → PyYAML），否则给出的安装命令会失败
+    dist = {"yaml": "PyYAML", "lxml": "lxml", "httpx": "httpx"}
+    print("缺少必需的第三方依赖：" + "、".join(missing), file=sys.stderr)
+    print("安装：python -m pip install " + " ".join(dist.get(m, m) for m in missing), file=sys.stderr)
+    print("自检：python -m collector doctor", file=sys.stderr)
+    print("（说明：本工具不需要 clone 之外的额外下载，但这几个包必须在运行环境里可用。）",
+          file=sys.stderr)
+    return 2
+
+
 def cmd_collect(args: argparse.Namespace) -> int:
+    blocked = _require_deps()
+    if blocked is not None:
+        return blocked
     from .net import NetConfig
     from .run import CollectOptions, run_collect
+
+    # 礼貌提醒：默认配置里的联系邮箱是占位符，采集前应换成真实联系方式
+    if not args.dry_run and os.path.exists(args.config):
+        try:
+            with open(args.config, encoding="utf-8") as f:
+                head = f.read(4000)
+            if "请在此填写你的邮箱" in head:
+                print("[提醒] sources.yaml 的 meta.contact_ua 仍是占位邮箱。"
+                      "正式采集前建议改成你的真实联系方式，便于站点管理员联系；"
+                      "或用 --dry-run 先查看将要请求的地址。", file=sys.stderr)
+        except OSError:
+            pass
 
     opts = CollectOptions(
         sources=[s.strip() for s in (args.sources or "").split(",") if s.strip()],
@@ -65,6 +114,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         until=args.until,
         max_fetch=args.max_fetch,
         listing_only=args.listing_only,
+        dry_run=args.dry_run,
         net=NetConfig(
             timeout=args.timeout,
             retries=args.retries,
@@ -76,6 +126,20 @@ def cmd_collect(args: argparse.Namespace) -> int:
 
     if args.json:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
+    elif summary.get("dry_run"):
+        print("== DRY RUN：未发送任何请求 ==")
+        print(f"将访问 {summary['sources_selected']} 个信源，"
+              f"列表请求 {summary['listing_requests_would_send']} 次，"
+              f"正文抓取预算 {summary['detail_fetch_budget']} 篇")
+        print()
+        for p in summary["plan"]:
+            print(f"  [{p['key']}] {p['name']}  (probe={p['probe']}, type={p['type']})")
+            for u in p["listing_requests"]:
+                print(f"      列表 → {u}")
+            print(f"      正文 → mode={p['detail_mode']} tiers={p['detail_tiers']}"
+                  f" 最多 {p['declared_max_items']} 条")
+        print()
+        print(summary["note"])
     else:
         print(f"== 采集完成 {report.started_at} → {report.finished_at} ==")
         print(f"条目总数：{len(report.articles)}｜正文获取率：{report.full_text_rate:.1%}")
@@ -100,6 +164,9 @@ def cmd_collect(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
+    blocked = _require_deps()
+    if blocked is not None:
+        return blocked
     from . import verify as verify_mod
 
     argv = [args.report, "--evidence", args.evidence]
@@ -125,6 +192,8 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--until", default=None, help="窗口终点 YYYY-MM-DD")
     c.add_argument("--max-fetch", type=int, default=40, help="本次最多抓多少篇正文")
     c.add_argument("--listing-only", action="store_true", help="只采集列表，不抓正文")
+    c.add_argument("--dry-run", action="store_true",
+                   help="只打印将要请求的地址与抓取预算，不发送任何请求（建议首次先跑这个）")
     c.add_argument("--timeout", type=float, default=25.0)
     c.add_argument("--retries", type=int, default=2)
     c.add_argument("--sleep", type=float, default=0.8, help="同域请求间隔（秒）")

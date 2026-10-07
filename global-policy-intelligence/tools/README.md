@@ -7,29 +7,37 @@
 
 ## 快速开始
 
-本层**零外部依赖安装**：只用 Python 标准库 + 环境中已有的 `httpx` / `lxml` / `pyyaml`。
-（装了 `pypdf` 或 `pdfminer.six` 会更好，没装也能解析文字版 PDF。）
+**前提**：Python 3.10+，且运行环境里已有 `httpx`、`lxml`、`PyYAML`。
+本层**不需要额外下载任何东西**（没有自研 pip 包、没有二进制、没有构建步骤），
+但这三个包必须在环境里可用——缺了会直接报错，`doctor` 会告诉你是哪几个。
 
 ```bash
+# 在 clone 出来的仓库根目录执行（即包含 global-policy-intelligence/ 的那一层）
 cd global-policy-intelligence/tools
 
 # 0) 环境自检：告诉你哪些能力可用、哪些会降级
 python -m collector doctor
 
-# 1) 采集（默认抓 40 篇正文；--sources 留空 = 用 sources.yaml 里 enabled 的信源）
+# 1) dry-run：只打印将要请求的地址与抓取预算，不发送任何请求（首次建议先跑这个）
+python -m collector collect --dry-run
+
+# 2) 采集（建议先用小预算试跑；--sources 留空 = 用 sources.yaml 里 enabled 的信源）
 python -m collector collect --sources federal_register,uk_legislation --max-fetch 10
 
-# 2) 只采列表不抓正文（先看有哪些新条目）
+# 3) 只采列表不抓正文（先看有哪些新条目）
 python -m collector collect --listing-only --json
 
-# 3) 按时间窗口采集
+# 4) 按时间窗口采集
 python -m collector collect --since 2026-09-01 --until 2026-09-30
 
-# 4) 对写好的报告做幻觉校验
+# 5) 对写好的报告做幻觉校验
 python -m collector verify 报告.md --evidence ../evidence
 ```
 
-退出码约定：`0` 成功；`2` 校验未通过或缺依赖；`3` 有信源失败（让定时任务能看见，
+> 首次使用前，建议先在 `sources.yaml` 里把 `meta.contact_ua` 的占位邮箱改成你的真实
+> 联系方式——采集会在 UA 里带上它，便于站点管理员识别与联系。
+
+退出码约定：`0` 成功；`2` 校验未通过或缺少依赖；`3` 有信源失败（让定时任务能看见，
 而不是假装一切正常）。
 
 ## 产物

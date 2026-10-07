@@ -81,16 +81,36 @@ python -m collector verify 报告.md --evidence ../evidence
 
 ## 快速开始
 
+**前提**：Python 3.10+，且运行环境里已有 `httpx`、`lxml`、`PyYAML` 三个包。
+
+> **"零外部依赖安装"是指不需要额外下载本项目所需的任何东西**（没有自研 pip 包、
+> 没有二进制、没有构建步骤），**不是指任何 Python 环境都能直接跑**。
+> 缺了上面三个包会直接报错——先用 `doctor` 自检，它会告诉你缺什么。
+
 ```bash
+# 在 clone 出来的仓库根目录执行（即包含 global-policy-intelligence/ 的那一层）
 cd global-policy-intelligence/tools
 
-python -m collector doctor     # 环境与能力自检：哪些能力可用、哪些会降级
-python -m collector collect    # 按信源表采集并抓正文（默认只跑 enabled 的信源）
+python -m collector doctor          # 环境与能力自检：哪些能力可用、哪些会降级
+python -m collector collect --dry-run   # 先看清将要请求哪些地址，不发任何请求
+python -m collector collect --max-fetch 10   # 确认后再真正采集（建议先设小预算）
 python -m collector verify 报告.md --evidence ../evidence
 ```
 
-零外部依赖安装：只用 Python 标准库 + 环境中已有的 `httpx` / `lxml` / `pyyaml`。
-装了 `pypdf` 或 `pdfminer.six` 会更好，没装也能解析文字版 PDF。
+**首次使用建议顺序**：`doctor` → 在 `sources.yaml` 里把 `meta.contact_ua` 的占位邮箱
+换成你的真实联系方式 → `collect --dry-run` 核对目标地址 → `collect --max-fetch N` 小批量试跑。
+
+缺少依赖时不会抛裸 `traceback`，而是给出可直接执行的修复命令：
+
+```
+$ python -m collector collect
+缺少必需的第三方依赖：httpx、lxml、yaml
+安装：python -m pip install httpx lxml PyYAML
+自检：python -m collector doctor
+```
+
+装了 `pypdf` 或 `pdfminer.six` 会更好（PDF 正文提取更完整），没装也能解析文字版 PDF，
+扫描件会被明确标记为 `scanned_pdf` 而不是当成正文。
 
 ## 测试与评测
 
