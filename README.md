@@ -37,7 +37,7 @@ global-policy-intelligence/
 │   ├── report-template.md            # 报告模板（含 2.5 检索与核验说明）
 │   └── quality-and-boundaries.md      # 交付前核查（含五个阻断项）
 ├── evals/evals.json                  # 11 项评测：4 项分析质量 + 7 项检索策略
-└── tools/                            # ★ 可执行采集层（零外部依赖安装）
+└── tools/                            # ★ 可执行采集层（前提见「快速开始」：需 httpx/lxml/PyYAML）
     ├── sources.yaml                  # 声明式信源注册表（含 probe 实测状态）
     ├── collector/                    # 分级采集 / 正文回落链 / 存证 / 幻觉校验
     ├── tests/                        # 72 项离线回归
