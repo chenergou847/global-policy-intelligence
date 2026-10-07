@@ -1,0 +1,99 @@
+# 评测用信源表（{BASE} 由评测脚本替换为本地静态服务器地址）
+# 目的：用固定 fixtures 覆盖 full / listing_only / blocked / pdf 四种结果路径
+meta:
+  version: eval
+  purpose: "离线检索评测，不访问外网"
+
+sources:
+  - key: eval_api
+    name: 评测·JSON 接口源
+    region: 境内
+    layer: L1
+    probe: verified
+    enabled: true
+    type: json_api
+    listing:
+      url: "{BASE}/api/list.json"
+      pages: 1
+    extract:
+      records_path: "data.rows"
+      title_field: "docTitle"
+      date_field: "publishDate"
+      docno_field: "documentNo"
+      link_template: "{BASE}/api/detail_{docId}.json"
+    detail:
+      mode: json_api
+      api_url: "{BASE}/api/detail_{docId}.json"
+      body_field: "docClob"
+      tiers: [api, html]
+    min_body_chars: 200
+    max_items: 3
+
+  - key: eval_html
+    name: 评测·静态 HTML 源
+    region: 境内
+    layer: L1
+    probe: verified
+    enabled: true
+    type: html_list
+    listing:
+      url: "{BASE}/static/listing.html"
+      pages: 1
+    extract:
+      records_path: null
+      link_pattern: "/static/detail_[a-z_]+\\.html"
+      html:
+        item_selector: "ul.list li"
+        link_pattern: "/static/detail_[a-z_]+\\.html"
+    detail:
+      mode: html
+      content_selectors: ["div.detail_content"]
+      tiers: [html, pdf]
+    min_body_chars: 200
+    max_items: 3
+
+  - key: eval_pdf
+    name: 评测·PDF 附件源
+    region: 境内
+    layer: L1
+    probe: verified
+    enabled: true
+    type: html_list
+    listing:
+      url: "{BASE}/static/detail_pdf.html"
+      pages: 1
+    extract:
+      records_path: null
+      link_pattern: "/static/detail_pdf\\.html"
+      html:
+        item_selector: "div.detail_content a"
+        link_pattern: "/static/detail_pdf\\.html"
+    detail:
+      mode: pdf
+      pdf_selectors: ["//a[contains(@href,'.pdf')]"]
+      content_selectors: ["div.detail_content"]
+      tiers: [html, pdf]
+    min_body_chars: 200
+    max_items: 1
+
+  - key: eval_blocked
+    name: 评测·声明为不可获取的源
+    region: 境外
+    layer: L1
+    probe: blocked
+    enabled: true
+    type: html_list
+    listing:
+      url: "{BASE}/static/listing.html"
+      pages: 1
+    extract:
+      records_path: null
+      link_pattern: "/static/detail_cf\\.html"
+      html:
+        item_selector: "ul.list li"
+        link_pattern: "/static/detail_cf\\.html"
+    detail:
+      mode: blocked
+      blocked_reason: "评测用：模拟 Cloudflare 质询，命令行不可获取"
+      tiers: []
+    max_items: 2

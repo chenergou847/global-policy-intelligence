@@ -1,0 +1,408 @@
+# =============================================================================
+# 政策情报检索层 · 信源注册表（sources.yaml）
+# =============================================================================
+# 这是 skill 原先缺失的那一层：把「要从哪个 URL、用哪种方式、字段怎么映射、
+# 失败了怎么办」变成可执行配置，而不是留给临场搜索。
+#
+# 字段说明
+#   key/name/region/layer   标识与权威层级（L1 原始权威 / L2 官方解释）
+#   probe                   该信源**实测状态**：verified / partial / unverified
+#                           —— 未实测的一律 unverified，不假装可用
+#   enabled                 是否参与默认采集
+#   type                    json_get | json_api | post_json | html_list | rss | sitemap
+#   listing.url             列表地址，支持 {page} / {start} 占位
+#   listing.pages           翻页页数；rows_per_page 用于计算 {start}
+#   listing.quirks          该站特有的坑（例如 pageSize 白名单）
+#   extract.*               JSON 字段映射，支持 'a|b|c' 回落链
+#   extract.html.*          HTML 列表：item_selector / link_pattern / date_from_url
+#   detail.mode             json_api | html | pdf | render | blocked
+#   detail.api_url          正文接口模板，用 {docId} 等占位
+#   detail.content_selectors 正文容器选择器（按优先级，支持内置 CSS→XPath 转换）
+#   detail.tiers            正文回落链顺序，默认 [api, html, pdf]
+#
+# 采集纪律
+#   · 只采集公开页面；不绕过验证码、登录墙、付费墙
+#   · 遇到 Cloudflare 等对抗性防护 → 标 blocked + 原因，绝不硬闯
+#   · 同域请求间隔 ≥ sleep_between（默认 0.8s）
+# =============================================================================
+
+meta:
+  version: 2
+  updated_at: "2026-10-07"
+  contact_ua: "policy-intel-collector/1.0 (+contact: 请在此填写你的邮箱，便于站点管理员联系)"
+  proxy_policy: |
+    实测：本机环境代理在部分境内政府站上 TLS 握手失败（SSL: UNEXPECTED_EOF_WHILE_READING），
+    而直连正常；境外站（Federal Register / legislation.gov.uk）代理与直连均可用。
+    因此 net.py 会：① 清理 NO_PROXY 中畸形的 [::1]；② 把官方信源域名加入直连名单；
+    ③ 代理失败时自动改直连重试。切勿简单"全局关代理"或"全局走代理"。
+  compliance: |
+    仅采集公开信息；保留原文链接与快照以便核验；不采集、不使用任何内部资料；
+    不绕过验证码/登录墙/付费墙。对外发布前必须人工核校。
+
+sources:
+  # ===========================================================================
+  # 境内 · 国家级
+  # ===========================================================================
+  - key: nfra_dongtai
+    name: 国家金融监督管理总局·监管动态
+    region: 境内
+    layer: L1
+    probe: unverified      # 平台模式来自公开实现，但本机直连实测为 404，请在你能访问的网络下用 doctor 复核
+    enabled: false
+    type: json_api
+    listing:
+      url: "https://www.nfra.gov.cn/cn/static/data/DocInfo/SelectDocByItemIdAndChild/data_itemId=915,pageIndex={page},pageSize=18.json"
+      pages: 1
+      rows_per_page: 18
+      quirks: "pageSize 有白名单，必须用 18，其他值返回 404"
+    extract:
+      records_path: "data.rows"
+      title_field: "docTitle"
+      date_field: "publishDate"
+      summary_field: "docSummary"
+      link_template: "https://www.nfra.gov.cn/cn/view/pages/ItemDetail.html?docId={docId}&itemId=915&generaltype=0"
+    detail:
+      mode: json_api
+      api_url: "https://www.nfra.gov.cn/cn/static/data/DocInfo/SelectByDocId/data_docId={docId}.json"
+      body_field: "docClob"
+      content_selectors: ["div.detail_content", "div.TRS_Editor", "div#zoom"]
+      tiers: [api, html, pdf]
+    keywords: ["保险", "再保险", "偿付", "跨境", "数据", "开放", "外资", "登记", "规则", "征求意见"]
+    max_items: 18
+    notes: "监管动态栏目；正文与文号可通过 SelectByDocId 接口一次取全，是性价比最高的信源。"
+
+  - key: nfra_zhengcefagui
+    name: 国家金融监督管理总局·政策法规
+    region: 境内
+    layer: L1
+    probe: unverified
+    enabled: false
+    type: json_api
+    listing:
+      url: "https://www.nfra.gov.cn/cn/static/data/DocInfo/SelectDocByItemIdAndChild/data_itemId=926,pageIndex={page},pageSize=18.json"
+      pages: 1
+      rows_per_page: 18
+      quirks: "同平台，pageSize 必须为 18"
+    extract:
+      records_path: "data.rows"
+      title_field: "docTitle"
+      date_field: "publishDate"
+      link_template: "https://www.nfra.gov.cn/cn/view/pages/ItemDetail.html?docId={docId}&itemId=926&generaltype=0"
+    detail:
+      mode: json_api
+      api_url: "https://www.nfra.gov.cn/cn/static/data/DocInfo/SelectByDocId/data_docId={docId}.json"
+      body_field: "docClob"
+      tiers: [api, html, pdf]
+    max_items: 18
+    notes: "正式规章与规范性文件，是核心结论最需要的 L1 来源。"
+
+  - key: govcn_zhengce
+    name: 中国政府网·最新政策
+    region: 境内
+    layer: L1
+    probe: partial          # 列表页实测可达（HTTP 200），但页面为 JS 渲染，需确认渲染层
+    enabled: false
+    type: html_list
+    listing:
+      url: "https://www.gov.cn/zhengce/zuixin/"
+      pages: 1
+      quirks: "实测直连可达；列表若为 JS 渲染，需要配置 POLICY_INTEL_RENDER_CMD 走渲染级"
+    extract:
+      records_path: null
+      link_pattern: "/zhengce/(?:content|zhengceku)/\\d{6}/[^\"']+"
+      html:
+        item_selector: "div.news_box li, ul.list li"
+        link_pattern: "/zhengce/(?:content|zhengceku)/\\d{6}/[^\"']+"
+    detail:
+      mode: html
+      content_selectors: ["div#UCAP-CONTENT", "div.pages_content", "div.article", "div.detail_content"]
+      tiers: [html, render, pdf, mirror]
+    max_items: 20
+    notes: "国务院政策文件库的官方入口。若静态取不到正文，用渲染级；仍失败则标 blocked，不得凭标题出结论。"
+
+  - key: flk_npc
+    name: 国家法律法规数据库
+    region: 境内
+    layer: L1
+    probe: partial          # 首页实测 200，但为 SPA，检索接口需渲染层或抓 XHR
+    enabled: false
+    type: html_list
+    listing:
+      url: "https://flk.npc.gov.cn/"
+      pages: 1
+      quirks: "SPA，接口为站内 XHR；静态抓取只能拿到骨架，需要渲染层"
+    extract:
+      records_path: null
+      link_pattern: "/detail[^\"']*"
+    detail:
+      mode: render
+      content_selectors: ["div.detail-content", "div.law-content", "article"]
+      tiers: [render, mirror]
+    max_items: 20
+    notes: "法律与行政法规的最权威来源。静态失败属预期，务必标 blocked 而不是放弃检索。"
+
+  - key: safe_gov
+    name: 国家外汇管理局·政策法规
+    region: 境内
+    layer: L1
+    probe: partial
+    enabled: false
+    type: html_list
+    listing:
+      url: "https://www.safe.gov.cn/safe/zcfg/index.html"
+      pages: 1
+      quirks: "本站证书链在部分环境不完整，如失败可对该源设 allow_insecure_tls: true"
+    extract:
+      records_path: null
+      link_pattern: "/safe/20\\d{2}/\\d{4}/\\d+\\.html"
+      html:
+        link_pattern: "/safe/20\\d{2}/\\d{4}/\\d+\\.html"
+        date_from_url: "/safe/(\\d{4})/(\\d{2})(\\d{2})/"
+    detail:
+      mode: html
+      content_selectors: ["div#zoom", "div.content", "div.TRS_Editor", "div.detail_content"]
+      tiers: [html, pdf, mirror]
+    keywords: ["跨境", "保险", "再保险", "资金", "便利化", "试点", "离岸", "跨国公司", "外债", "外汇管理"]
+    max_items: 30
+    notes: "跨境资金与再保险资金结算规则的原始来源。"
+
+  # ===========================================================================
+  # 境内 · 地方
+  # ===========================================================================
+  - key: shanghai_policy
+    name: 上海市人民政府·政策发布
+    region: 境内
+    layer: L1
+    probe: unverified
+    enabled: false
+    type: post_json
+    listing:
+      url: "https://www.shanghai.gov.cn/gwk/policy/page"
+      method: POST
+      body: '{"siteIdList":["0001"],"siteType":0,"pageNo":{page},"pageSize":5}'
+      pages: 3
+      rows_per_page: 5
+      quirks: "POST JSON；pageSize 固定为 5；翻页依赖会话状态，命令行可能只能取到最新几条"
+    extract:
+      records_path: "data.records"
+      title_field: "title"
+      date_field: "publishDate"
+      summary_field: "summary"
+      link_field: "attrs.zwPDFUrl"
+      link_prefix: "https://www.shanghai.gov.cn"
+    detail:
+      mode: pdf
+      pdf_field: "attrs.zwPDFUrl"
+      pdf_selectors: ["//a[contains(@href,'.pdf')]"]
+      tiers: [pdf, html, mirror]
+    keywords: ["金融", "保险", "再保险", "跨境", "临港", "国际金融中心", "自由贸易", "资本市场", "数据", "风险"]
+    max_items: 20
+    notes: "上海政策正文常以 PDF 附件形式发布，pdf 级是主路径而非兜底。"
+
+  - key: jrj_sh
+    name: 上海市地方金融监督管理局·工作动态
+    region: 境内
+    layer: L1
+    probe: partial
+    enabled: false
+    type: html_list
+    listing:
+      url: "https://jrj.sh.gov.cn/GZDT177/index.html"
+      pages: 1
+    extract:
+      records_path: null
+      link_pattern: "/GZDT177/\\d{8}/[0-9a-f]+\\.html"
+      html:
+        link_pattern: "/GZDT177/\\d{8}/[0-9a-f]+\\.html"
+        date_from_url: "(\\d{4})(\\d{2})(\\d{2})/"
+    detail:
+      mode: html
+      content_selectors: ["div.article-content", "div.content", "div.TRS_Editor", "div.detail_content"]
+      tiers: [html, pdf, mirror]
+    keywords: ["金融", "保险", "再保险", "跨境", "临港", "国际金融中心", "数据", "开放", "风险"]
+    max_items: 20
+    notes: "上海属地监管口径来源，与总局文件配合使用（注意不要混写行政层级）。"
+
+  - key: lingang_policy
+    name: 临港新片区·政策文件
+    region: 境内
+    layer: L1
+    probe: unverified
+    enabled: false
+    type: post_json
+    listing:
+      url: "https://www.lingang.gov.cn/baseSelect"
+      method: POST
+      body: '{"pageSize":20,"pageNumber":{page},"tableName":"view_zhengcewenjian","betweenMap":[{"begin":"2024-01-01","end":"2100-01-01","column":"content_datetime"}],"orderBy":"content_datetime desc","columns":["id","content_title","content_datetime","content","file_code"],"likeMap":[{"tj":"","column":"file_code","val":"沪自贸临管委"},{"tj":"or","column":"file_code","val":"沪自贸临管规范"}],"eqMap":{"del":0,"content_display":0}}'
+      pages: 2
+      rows_per_page: 20
+      quirks: "POST JSON；用 likeMap 过滤正式文号，避免混入通知公告"
+    extract:
+      records_path: "data.list"
+      title_field: "content_title"
+      date_field: "content_datetime"
+      docno_field: "file_code"
+      summary_field: "content"
+      link_template: "https://www.lingang.gov.cn/html/website/lg/index/government/file/{id}.html"
+    detail:
+      mode: html
+      content_selectors: ["div.content", "div.article-content", "div.TRS_Editor"]
+      tiers: [html, pdf, mirror]
+    keywords: ["金融", "保险", "再保险", "数据", "跨境", "总部", "人才", "产业", "外汇"]
+    max_items: 20
+    notes: "临港新片区规范性文件；content_datetime 为毫秒时间戳，已由 collector 自动换算。"
+
+  # ===========================================================================
+  # 境外 · 已实测可用（probe: verified）
+  # ===========================================================================
+  - key: federal_register
+    name: US Federal Register（联邦公报）
+    region: 境外
+    layer: L1
+    probe: verified          # 实测 200，字段已核对
+    enabled: true
+    type: json_get
+    listing:
+      url: "https://www.federalregister.gov/api/v1/documents.json?per_page=20&page={page}&order=newest&fields[]=title&fields[]=publication_date&fields[]=document_number&fields[]=html_url&fields[]=raw_text_url&fields[]=type&fields[]=agencies"
+      pages: 2
+      rows_per_page: 20
+      quirks: "官方 API；page 参数翻页；fields[] 控制返回字段以减小响应体积"
+    extract:
+      records_path: "results"
+      title_field: "title"
+      date_field: "publication_date"
+      docno_field: "document_number"
+      link_field: "html_url"
+      summary_field: "type"
+    detail:
+      mode: text
+      # 关键：FR 的详情页 HTML 里**没有正文**，正文只在 raw_text_url 指向的纯文本里。
+      # 这就是"能看见标题、看不到正文"的教科书案例；text 级专治这种源。
+      # text_api_template 优先：直接问官方接口要确切地址，比按日期拼接更可靠。
+      text_api_template: "https://www.federalregister.gov/api/v1/documents/{docno}.json?fields[]=raw_text_url"
+      text_url_template: "https://www.federalregister.gov/documents/full_text/text/{year}/{month}/{day}/{docno}.txt"
+      content_selectors: ["div.document-details", "div#preamble", "div.body-content", "article"]
+      pdf_selectors: ["//a[contains(@href,'.pdf')]"]
+      tiers: [text, html, pdf]
+    keywords: ["reinsurance", "insurance", "sanction", "export control", "tariff", "data", "capital",
+               "securities", "regulation", "rule", "financial", "agency", "notice", "proposed"]
+    max_items: 20
+    notes: "世界最规范的法规 API 之一：列表与正文都是官方结构化输出。正文走 raw_text_url（纯文本），document_number 可作文号核验。"
+
+  - key: uk_legislation
+    name: UK legislation.gov.uk（新发布立法）
+    region: 境外
+    layer: L1
+    probe: verified          # 实测 200，Atom feed
+    enabled: true
+    type: rss
+    listing:
+      url: "https://www.legislation.gov.uk/new/data.feed?results-count=30"
+      pages: 1
+      quirks: "官方 Atom feed；条目带 published 时间"
+      encoding: "utf-8"
+    extract:
+      title_field: "title"
+      date_field: "published|updated"
+      link_field: "link"
+    detail:
+      mode: html
+      content_selectors: ["div#content", "div.legislation-body", "main", "article"]
+      pdf_selectors: ["a[href$='.pdf']"]
+      tiers: [html, pdf, mirror]
+    keywords: ["insurance", "reinsurance", "financial services", "sanctions", "data protection", "tax"]
+    max_items: 30
+    notes: "英国立法官方订阅源；正文页为结构化 HTML，也可取 PDF 正式文本。"
+
+  - key: eurlex
+    name: EUR-Lex（欧盟法律）
+    region: 境外
+    layer: L1
+    probe: partial           # 实测返回 202 挑战页，需渲染层或改用 Cellar SPARQL
+    enabled: false
+    type: render
+    listing:
+      url: "https://eur-lex.europa.eu/homepage.html"
+      pages: 1
+      quirks: "实测返回 HTTP 202（反爬挑战），静态抓取拿不到内容；建议渲染层或改用 Cellar/SPARQL 接口"
+    extract:
+      records_path: null
+      link_pattern: "/legal-content/[^\"']+"
+    detail:
+      mode: render
+      content_selectors: ["div#document1", "div.eli-container", "main"]
+      tiers: [render, mirror]
+    max_items: 20
+    human_assist: true
+    notes: "若你的网络无法通过渲染层获取，明确标 blocked；不要用二手解读替代欧盟法规原文。"
+
+  - key: iais
+    name: IAIS（国际保险监督官协会）
+    region: 境外
+    layer: L2
+    probe: partial
+    enabled: false
+    type: sitemap
+    listing:
+      url: "https://www.iaisweb.org/sitemap_index.xml"
+      pages: 1
+      quirks: "该站为 WordPress；sitemap 覆盖文章与出版物，用 lastmod 作日期"
+    extract:
+      records_path: null
+      link_pattern: "iaisweb\\.org/20\\d{2}/\\d{2}/[a-z0-9-]+"
+    days: 180
+    detail:
+      mode: html
+      content_selectors: ["div.entry-content", "article", "main"]
+      tiers: [html, pdf, mirror]
+    max_items: 20
+    notes: "保险监管国际标准（ICS、ICP）来源；sitemap 只给 URL slug 作标题占位，标题由正文页补全。"
+
+  - key: artemis
+    name: Artemis（国际再保险与 ILS）
+    region: 境外
+    layer: L3
+    probe: verified
+    enabled: true
+    type: rss
+    listing:
+      url: "https://www.artemis.bm/feed/"
+      pages: 1
+      quirks: "行业媒体，作为线索与市场背景，不得支撑法律结论"
+    extract:
+      title_field: "title"
+      date_field: "pubDate"
+      link_field: "link"
+    detail:
+      mode: html
+      content_selectors: ["div.entry-content", "article", "main"]
+      tiers: [html, mirror]
+    max_items: 10
+    notes: "L3 高可信二手：用于发现线索与市场背景，重要结论须回溯 L1/L2。"
+
+  # ===========================================================================
+  # 已知不可自动获取（显式声明 blocked，避免"静默漏源"）
+  # ===========================================================================
+  - key: hk_ia_blocked
+    name: 香港保险业监管局（IA）
+    region: 境外
+    layer: L1
+    probe: verified          # 已实测确认：确实是反爬拦截
+    enabled: false
+    type: html_list
+    listing:
+      url: "https://www.ia.org.hk/en/infocenter/"
+      pages: 1
+      quirks: "Cloudflare JS 质询，静态与无头浏览器均被拦"
+    extract:
+      records_path: null
+      link_pattern: "ia\\.org\\.hk"
+    detail:
+      mode: blocked
+      blocked_reason: "Cloudflare JS 质询；命令行与无头浏览器均被拦截。需要人工浏览器辅助，或寻找替代官方渠道。"
+      tiers: []
+    human_assist: true
+    max_items: 0
+    notes: |
+      明确声明为不可自动获取。这是**刻意的诚实设计**：信源表里留下这条记录，
+      报告就必须写"该监管机构本期未取得正文"，而不是悄悄不提或凭标题推测。

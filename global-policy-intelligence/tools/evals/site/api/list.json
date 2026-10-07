@@ -1,0 +1,10 @@
+{
+  "code": 200,
+  "data": {
+    "rows": [
+      {"docId": "1001", "docTitle": "关于印发跨境再保险业务资金结算管理办法的通知", "publishDate": "2026-09-20", "documentNo": "金规〔2026〕11号"},
+      {"docId": "1002", "docTitle": "关于跨境数据流动便利化若干措施的通知", "publishDate": "2026-09-18", "documentNo": "沪府办发〔2026〕21号"},
+      {"docId": "1003", "docTitle": "关于2026年8月保险业经营情况的通报", "publishDate": "2026-09-10", "documentNo": ""}
+    ]
+  }
+}
