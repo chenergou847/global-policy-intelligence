@@ -40,7 +40,7 @@ global-policy-intelligence/
 └── tools/                            # ★ 可执行采集层（前提见「快速开始」：需 httpx/lxml/PyYAML）
     ├── sources.yaml                  # 声明式信源注册表（含 probe 实测状态）
     ├── collector/                    # 分级采集 / 正文回落链 / 存证 / 幻觉校验
-    ├── tests/                        # 72 项离线回归
+    ├── tests/                        # 78 项离线回归
     └── evals/                        # 25 项检索策略评测
 ```
 
@@ -112,11 +112,31 @@ $ python -m collector collect
 装了 `pypdf` 或 `pdfminer.six` 会更好（PDF 正文提取更完整），没装也能解析文字版 PDF，
 扫描件会被明确标记为 `scanned_pdf` 而不是当成正文。
 
+### 缺依赖时到底会怎样（实测）
+
+**不会自动安装**，也不会降级成"跳过校验照样跑"——命令直接停，并告诉你怎么修。
+下面的行为是逐项实测的结果：
+
+| 命令 | 缺 `httpx` 或 `lxml` | 缺 `PyYAML` | 退出码 |
+|---|---|---|---|
+| `doctor` | 正常跑完并列出缺哪个 | 正常跑完并列出缺哪个 | 0 齐全 / 2 有缺 |
+| `collect --dry-run` | **照常出计划**（只读配置，不需要联网/解析） | 报错并给安装命令 | 0 / 2 |
+| `collect`（真实采集） | 报错并给安装命令 | 报错并给安装命令 | 2 |
+| `verify` | 报错并给安装命令 | 报错并给安装命令 | 2 |
+
+设计取舍：`doctor` 与 `collect --dry-run` 刻意不依赖 `httpx`/`lxml`，
+因为它们只是"读配置 + 打印"，**这正是缺依赖的用户最该先跑的两条命令**；
+真实采集与幻觉校验则需要联网与 HTML 解析能力——**拿不到正文就不该出结论**，
+所以它们宁可停下也不降级。
+
+超出本工具能力的是：**它不会替用户执行 `pip install`**。Agent 会看到上面那段
+提示，但要不要装、用哪个 Python 环境装，需要由你决定。
+
 ## 测试与评测
 
 ```bash
 cd global-policy-intelligence/tools
-python tests/run_tests.py              # 72 项离线回归
+python tests/run_tests.py              # 78 项离线回归
 python evals/make_pdf_fixture.py       # 生成评测用 PDF fixture
 python evals/run_retrieval_evals.py    # 25 项检索策略评测（本地服务器，不联网）
 ```

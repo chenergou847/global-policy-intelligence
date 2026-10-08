@@ -49,6 +49,20 @@ python -m collector verify 报告.md --evidence ../evidence
 | `../evidence/<日期>_全文存档.md` | 人类可读全文存档（未取得正文的条目会写明原因与已试路径） |
 | `tools/evals/.evidence/` | 离线评测用的证据库（可随时删除重建） |
 
+## 缺依赖时的行为（实测）
+
+**不自动安装**，也不降级。命令直接停并给出安装命令：
+
+| 命令 | 缺 `httpx`/`lxml` | 缺 `PyYAML` | 退出码 |
+|---|---|---|---|
+| `doctor` | 跑完并列出缺哪个 | 跑完并列出缺哪个 | 0 / 2 |
+| `collect --dry-run` | **照常出计划** | 报错 | 0 / 2 |
+| `collect` / `verify` | 报错 | 报错 | 2 |
+
+`dryrun.py` 刻意只依赖 `registry`（进而只依赖 `pyyaml`），不导入 `httpx`/`lxml`：
+缺依赖的用户最该先跑 `--dry-run` 看清目标地址，它不能被联网/解析能力拦住。
+`tools/tests/run_tests.py` 的 T28 用 AST 静态检查 + 实跑锁住这个约束。
+
 ## 架构
 
 ```
@@ -104,7 +118,7 @@ set POLICY_INTEL_RENDER_CMD=my-render-cli
 ## 测试与评测
 
 ```bash
-python tests/run_tests.py              # 72 项离线回归（含上述三大坑）
+python tests/run_tests.py              # 78 项离线回归（含上述三大坑）
 python evals/make_pdf_fixture.py       # 生成评测用 PDF fixture
 python evals/run_retrieval_evals.py    # 25 项检索策略评测（本地静态服务器，不联网）
 ```

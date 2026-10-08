@@ -33,6 +33,7 @@ sys.path.insert(0, TOOLS)
 
 FIX = os.path.join(HERE, "fixtures")
 TMP_ROOT = os.path.join(HERE, ".tmp")
+SRC_YAML = os.path.join(TOOLS, "sources.yaml")
 
 
 @contextlib.contextmanager
@@ -544,6 +545,50 @@ def t27() -> None:
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+@test("T28 回归：dry-run 不得依赖 httpx/lxml（缺依赖的用户最该先跑它）")
+def t28() -> None:
+    """这是实测发现的缺陷。
+
+    原实现把 dry-run 计划放在 run.py 里，而 run.py 顶部 import 了 httpx/lxml，
+    于是「缺依赖时最该先跑」的 `collect --dry-run` 自己就抛 ImportError。
+    正确做法是让计划逻辑只依赖 pyyaml（读配置）。
+    这里做静态检查：dryrun.py 源码不得出现 httpx / lxml / net / fetch / store 的导入。
+    """
+    src_path = os.path.join(TOOLS, "collector", "dryrun.py")
+    check("T28 dryrun.py 存在", os.path.isfile(src_path), src_path)
+
+    # 用 AST 解析而不是子串匹配：文档字符串里也会提到 "import httpx"，
+    # 朴素匹配会误报（实测被自己的测试抓到）。
+    import ast
+
+    with open(src_path, encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+    forbidden = {"httpx", "lxml", "net", "fetch", "store", "listparse"}
+    check("T28 未导入 httpx/lxml/net/fetch/store",
+          not (imported & forbidden),
+          f"实际导入: {sorted(imported)}")
+    check("T28 只依赖 registry 与标准库",
+          imported <= {"registry", "typing", "__future__"},
+          f"实际导入: {sorted(imported)}")
+
+    # 并且它必须真的能产出计划
+    from collector import dryrun
+
+    plan = dryrun.build_dry_run_plan(SRC_YAML)
+    check("T28 可生成计划", plan.get("sources_selected", 0) >= 1, str(plan)[:120])
+    check("T28 计划含请求地址",
+          all(p["listing_requests"] for p in plan["plan"]),
+          str(plan["plan"])[:120])
+    check("T28 schema 与正常路径一致",
+          {"failures", "duplicates", "archive_path"} <= set(plan), str(sorted(plan)))
 
 
 @test("T23 完整性四态与结论强度绑定")

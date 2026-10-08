@@ -22,11 +22,15 @@ DEFAULT_ARCHIVE = os.path.join(os.path.dirname(TOOLS_DIR), "evidence")
 
 
 def _capabilities() -> dict[str, object]:
+    import importlib
+
     caps: dict[str, object] = {}
     caps["python"] = sys.version.split()[0]
+    # 注意用 import_module 而不是 find_spec：后者只定位文件、不执行导入，
+    # 遇到"文件在但导入失败"（二进制不兼容等）会误报为可用。
     for name in ("httpx", "lxml", "yaml", "pypdf", "pdfminer", "cssselect", "playwright"):
         try:
-            __import__(name)
+            importlib.import_module(name)
             caps[name] = True
         except Exception:  # noqa: BLE001
             caps[name] = False
@@ -90,6 +94,36 @@ def _require_deps() -> int | None:
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
+    # dry-run 只需要 PyYAML（读配置），不需要 httpx/lxml：
+    # 缺依赖的用户最该先跑这个命令，所以不能被联网/解析能力拦住
+    # （这是实测发现的设计缺陷：原先它和真实采集共用同一条依赖检查）。
+    if args.dry_run:
+        from .dryrun import build_dry_run_plan
+
+        summary = build_dry_run_plan(
+            args.config,
+            sources=[s.strip() for s in (args.sources or "").split(",") if s.strip()],
+            max_fetch=args.max_fetch,
+            listing_only=args.listing_only,
+        )
+        if args.json:
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+        else:
+            print("== DRY RUN：未发送任何请求 ==")
+            print(f"将访问 {summary['sources_selected']} 个信源，"
+                  f"列表请求 {summary['listing_requests_would_send']} 次，"
+                  f"正文抓取预算 {summary['detail_fetch_budget']} 篇")
+            print()
+            for p in summary["plan"]:
+                print(f"  [{p['key']}] {p['name']}  (probe={p['probe']}, type={p['type']})")
+                for u in p["listing_requests"]:
+                    print(f"      列表 → {u}")
+                print(f"      正文 → mode={p['detail_mode']} tiers={p['detail_tiers']}"
+                      f" 最多 {p['declared_max_items']} 条")
+            print()
+            print(summary["note"])
+        return 0
+
     blocked = _require_deps()
     if blocked is not None:
         return blocked
@@ -126,20 +160,6 @@ def cmd_collect(args: argparse.Namespace) -> int:
 
     if args.json:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
-    elif summary.get("dry_run"):
-        print("== DRY RUN：未发送任何请求 ==")
-        print(f"将访问 {summary['sources_selected']} 个信源，"
-              f"列表请求 {summary['listing_requests_would_send']} 次，"
-              f"正文抓取预算 {summary['detail_fetch_budget']} 篇")
-        print()
-        for p in summary["plan"]:
-            print(f"  [{p['key']}] {p['name']}  (probe={p['probe']}, type={p['type']})")
-            for u in p["listing_requests"]:
-                print(f"      列表 → {u}")
-            print(f"      正文 → mode={p['detail_mode']} tiers={p['detail_tiers']}"
-                  f" 最多 {p['declared_max_items']} 条")
-        print()
-        print(summary["note"])
     else:
         print(f"== 采集完成 {report.started_at} → {report.finished_at} ==")
         print(f"条目总数：{len(report.articles)}｜正文获取率：{report.full_text_rate:.1%}")
@@ -164,6 +184,16 @@ def cmd_collect(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
+    # 先做输入检查，给出可操作的提示而不是让 open() 抛 FileNotFoundError
+    if not os.path.isfile(args.report):
+        print(f"找不到报告文件：{args.report}", file=sys.stderr)
+        print("用法：python -m collector verify <报告.md> --evidence <证据库目录>", file=sys.stderr)
+        return 2
+    if not os.path.isdir(args.evidence):
+        print(f"找不到证据库目录：{args.evidence}", file=sys.stderr)
+        print("提示：先运行 python -m collector collect 生成证据库。", file=sys.stderr)
+        return 2
+
     blocked = _require_deps()
     if blocked is not None:
         return blocked

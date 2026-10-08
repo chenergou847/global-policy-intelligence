@@ -114,49 +114,27 @@ def run_collect(
     options: CollectOptions | None = None,
 ) -> tuple[RunReport, dict[str, Any]]:
     opts = options or CollectOptions()
-    registry: Registry = load_registry(registry_path)
     report = RunReport(started_at=dt.datetime.now().isoformat(timespec="seconds"))
+
+    # dry-run 走独立模块（只依赖 pyyaml，不碰 httpx/lxml）
+    if opts.dry_run:
+        from .dryrun import build_dry_run_plan
+
+        report.finished_at = dt.datetime.now().isoformat(timespec="seconds")
+        return report, build_dry_run_plan(
+            registry_path,
+            sources=opts.sources,
+            max_fetch=opts.max_fetch,
+            listing_only=opts.listing_only,
+        )
+
+    registry: Registry = load_registry(registry_path)
     failures: list[dict[str, str]] = []
 
     selected = [
         s for s in registry.enabled
         if not opts.sources or s.key in opts.sources
     ]
-
-    # ---------- 0. dry-run：不发任何请求 ----------
-    # 为什么需要：默认配置直接跑 collect 会对第三方站点发起真实请求，
-    # 而新读者此时往往还没在 sources.yaml 里填自己的联系方式。
-    # 先 dry-run 看清「将要请求哪些地址」，再决定是否真正采集。
-    if opts.dry_run:
-        plan: list[dict[str, Any]] = []
-        for source in selected:
-            targets = [u for u, _ in listparse.build_page_targets(source)]
-            plan.append({
-                "key": source.key,
-                "name": source.name,
-                "probe": source.probe,
-                "type": source.type,
-                "listing_requests": targets,
-                "detail_mode": source.detail.mode,
-                "detail_tiers": source.detail.resolved_tiers(),
-                "declared_max_items": source.max_items,
-            })
-        report.finished_at = dt.datetime.now().isoformat(timespec="seconds")
-        total_listing = sum(len(p["listing_requests"]) for p in plan)
-        summary = {
-            "dry_run": True,
-            "failures": [],          # 与正常路径保持同一 schema，便于调用方统一处理
-            "duplicates": [],
-            "archive_path": "",
-            "ledger_path": "",
-            "note": ("未发送任何请求。确认无误后去掉 --dry-run 再执行；"
-                     "并建议先去掉 sources.yaml 中 meta.contact_ua 的占位邮箱。"),
-            "sources_selected": len(plan),
-            "listing_requests_would_send": total_listing,
-            "detail_fetch_budget": 0 if opts.listing_only else opts.max_fetch,
-            "plan": plan,
-        }
-        return report, summary
 
     fetcher = Fetcher(opts.net)
     collected: list[Article] = []
