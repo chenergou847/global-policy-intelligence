@@ -1,0 +1,11 @@
+# global-policy-intelligence · 采集层依赖
+#
+# 这三个是必需依赖（缺任何一个，collect / verify 都会明确报错并提示安装）：
+httpx>=0.27        # HTTP 客户端（分级抓取、代理分流、重试）
+lxml>=5.0          # HTML/XML 解析（正文抽取、RSS/sitemap 解析）
+PyYAML>=6.0        # 读取 sources.yaml 信源注册表
+
+# 可选依赖：装了能把 PDF 正文提取得更完整（没装也能解析文字版 PDF，
+# 扫描件会被明确标记为 scanned_pdf 而不是当成正文）
+# pypdf>=4.0
+# pdfminer.six>=20231228

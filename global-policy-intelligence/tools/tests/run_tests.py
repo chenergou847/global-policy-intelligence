@@ -591,6 +591,49 @@ def t28() -> None:
           {"failures", "duplicates", "archive_path"} <= set(plan), str(sorted(plan)))
 
 
+@test("T29 缺 PyYAML 时 dry-run 要给提示而不是裸 traceback")
+def t29() -> None:
+    """实测发现：缺 httpx/lxml 时 dry-run 已能照常出计划，但缺 PyYAML 时
+    会直接抛 ImportError 栈（因为它读不了 sources.yaml）。
+    README 的实测行为表写的是"报错并给安装命令"，这里把该行为锁住。
+
+    做法：用子进程 + 影子 yaml 模块，断言退出码为 2 且 stderr 含安装提示、
+    且没有 Traceback。
+    """
+    import subprocess
+
+    shadow = os.path.join(TMP_ROOT, f"shadow_yaml_{os.getpid()}")
+    os.makedirs(shadow, exist_ok=True)
+    with open(os.path.join(shadow, "yaml.py"), "w", encoding="utf-8") as f:
+        f.write("raise ImportError('simulated missing yaml')\n")
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = shadow + os.pathsep + TOOLS
+    env["PYTHONIOENCODING"] = "utf-8"
+    r = subprocess.run([sys.executable, "-m", "collector", "collect", "--dry-run"],
+                       cwd=TOOLS, env=env, capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=120)
+    out = (r.stdout or "") + (r.stderr or "")
+    check("T29 退出码=2", r.returncode == 2, f"exit={r.returncode}")
+    check("T29 给出安装提示", "缺少必需的第三方依赖" in out, out[:160])
+    check("T29 无裸 traceback", "Traceback" not in out, out[:200])
+    check("T29 指向 doctor", "doctor" in out, out[:160])
+
+
+@test("T30 配置文件缺失时也应是可读提示而不是崩溃")
+def t30() -> None:
+    import subprocess
+
+    r = subprocess.run([sys.executable, "-m", "collector", "collect", "--dry-run",
+                        "--config", os.path.join(TMP_ROOT, "no_such_sources.yaml")],
+                       cwd=TOOLS, capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=120)
+    out = (r.stdout or "") + (r.stderr or "")
+    check("T30 退出码=2", r.returncode == 2, f"exit={r.returncode}")
+    check("T30 说明找不到配置", "找不到信源配置" in out, out[:160])
+    check("T30 无裸 traceback", "Traceback" not in out, out[:200])
+
+
 @test("T23 完整性四态与结论强度绑定")
 def t23() -> None:
     check("T23 full 可支撑核心结论", FetchStatus.FULL.allows_core_conclusion)

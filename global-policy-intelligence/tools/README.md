@@ -5,9 +5,15 @@
 它把「检索」从临场搜索变成可执行的采集工程：声明式信源表 → 分级抓取 → 完整性判定
 → 证据存证 → 确定性幻觉校验。
 
+> **安装方式见仓库根目录 [README](../README.md) 的「怎么用（两步）」** ——
+> 可以一句话交给 Agent 装（`帮我安装这个 Skill：<仓库地址>，并装好依赖`），
+> 也可以下载 ZIP 或 `git clone`，然后 `pip install -r ../requirements.txt`。
+
 ## 快速开始
 
-**前提**：Python 3.10+，且运行环境里已有 `httpx`、`lxml`、`PyYAML`。
+**前提**：Python 3.10+，且运行环境里已有 `httpx`、`lxml`、`PyYAML`
+（三者都写在 Skill 根目录的 `../requirements.txt` 里，
+`pip install -r ../requirements.txt` 一次装齐）。
 本层**不需要额外下载任何东西**（没有自研 pip 包、没有二进制、没有构建步骤），
 但这三个包必须在环境里可用——缺了会直接报错，`doctor` 会告诉你是哪几个。
 
@@ -118,7 +124,7 @@ set POLICY_INTEL_RENDER_CMD=my-render-cli
 ## 测试与评测
 
 ```bash
-python tests/run_tests.py              # 78 项离线回归（含上述三大坑）
+python tests/run_tests.py              # 85 项离线回归（含上述三大坑）
 python evals/make_pdf_fixture.py       # 生成评测用 PDF fixture
 python evals/run_retrieval_evals.py    # 25 项检索策略评测（本地静态服务器，不联网）
 ```

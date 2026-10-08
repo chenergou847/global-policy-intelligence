@@ -98,6 +98,14 @@ def cmd_collect(args: argparse.Namespace) -> int:
     # 缺依赖的用户最该先跑这个命令，所以不能被联网/解析能力拦住
     # （这是实测发现的设计缺陷：原先它和真实采集共用同一条依赖检查）。
     if args.dry_run:
+        # 但它确实需要 pyyaml 才能读 sources.yaml——缺了要给提示而不是裸 traceback
+        if "yaml" in _missing_required():
+            return _require_deps() or 2
+        if not os.path.isfile(args.config):
+            print(f"找不到信源配置：{args.config}", file=sys.stderr)
+            print("提示：--config 默认指向 tools/sources.yaml，请确认当前目录或显式指定。",
+                  file=sys.stderr)
+            return 2
         from .dryrun import build_dry_run_plan
 
         summary = build_dry_run_plan(
