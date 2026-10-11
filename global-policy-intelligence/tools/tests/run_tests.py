@@ -605,6 +605,98 @@ def t28() -> None:
           {"failures", "duplicates", "archive_path"} <= set(plan), str(sorted(plan)))
 
 
+@test("T31 doctor 要按能力分层报告，不能把部分降级说成整体不可用")
+def t31() -> None:
+    """实测发现：只缺 lxml 时，旧版 doctor 只报「[错误] 缺少必需依赖: lxml」并 exit 2，
+    读起来像"这工具装坏了"——但幻觉校验层完全不依赖 lxml，是能用的。
+
+    现在 doctor 分层报告：不可用的能力打 ✗ 并只列它缺的包，可用的打 ✓，
+    并在仍有可用能力时明确说明"只想校验报告不需要任何第三方包"。
+    """
+    import subprocess
+
+    shadow = os.path.join(TMP_ROOT, f"shadow_lxml_{os.getpid()}")
+    os.makedirs(shadow, exist_ok=True)
+    with open(os.path.join(shadow, "lxml.py"), "w", encoding="utf-8") as f:
+        f.write("raise ImportError('simulated missing lxml')\n")
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = shadow + os.pathsep + TOOLS
+    env["PYTHONIOENCODING"] = "utf-8"
+
+    r = subprocess.run([sys.executable, "-m", "collector", "doctor"],
+                       cwd=TOOLS, env=env, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=120)
+    out = (r.stdout or "") + (r.stderr or "")
+
+    check("T31 退出码=2（确有降级）", r.returncode == 2, f"exit={r.returncode}")
+    check("T31 标出不可用的能力", "正文采集 collect" in out and "不可用" in out, out[-400:])
+    check("T31 标出仍可用的能力", "✓ 幻觉校验 verify" in out, out[-400:])
+    check("T31 只列真正缺的包", "缺 lxml" in out, out[-400:])
+    check("T31 说明校验层零依赖",
+          "不需要任何第三方包" in out, out[-400:])
+    check("T31 不把整件事说成装坏", "缺少必需依赖" not in out, out[-300:])
+
+    # 齐全时必须是全部可用、exit 0
+    r2 = subprocess.run([sys.executable, "-m", "collector", "doctor"],
+                        cwd=TOOLS, capture_output=True, text=True,
+                        encoding="utf-8", errors="replace", timeout=120)
+    out2 = (r2.stdout or "") + (r2.stderr or "")
+    check("T31 齐全时 exit=0", r2.returncode == 0, f"exit={r2.returncode}")
+    check("T31 齐全时报告全部可用", "全部能力可用" in out2, out2[-200:])
+
+
+@test("T32 verify 必须在零第三方依赖的环境下可用（最有价值的能力不能被依赖挡住）")
+def t32() -> None:
+    """实测发现的严重不一致：verify.py 模块只用标准库，但 cmd_verify 曾调用
+    _require_deps()（要求 httpx+lxml+yaml 全齐），于是"只想校验报告"的用户
+    一个包都没装成功时就被挡住——而防幻觉校验恰恰是最该随时可用的能力。
+
+    这个不一致是被 README 里一句"verify 缺包也能用"的声明反向发现的
+    （文档先写了、代码没做到）。这里用影子模块屏蔽全部三个包来锁住正确行为。
+    """
+    import json
+    import subprocess
+
+    shadow = os.path.join(TMP_ROOT, f"shadow_all_{os.getpid()}")
+    ev = os.path.join(TMP_ROOT, f"ev_nodep_{os.getpid()}")
+    os.makedirs(shadow, exist_ok=True)
+    os.makedirs(ev, exist_ok=True)
+    for mod in ("httpx", "lxml", "yaml"):
+        with open(os.path.join(shadow, f"{mod}.py"), "w", encoding="utf-8") as f:
+            f.write(f"raise ImportError('simulated missing {mod}')\n")
+    with open(os.path.join(ev, "index.json"), "w", encoding="utf-8") as f:
+        json.dump({"entries": {}}, f)
+
+    report = os.path.join(TMP_ROOT, f"r_nodep_{os.getpid()}.md")
+    with open(report, "w", encoding="utf-8") as f:
+        f.write("# 报告\n\n- 来源：https://x.example/1\n")
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = shadow + os.pathsep + TOOLS
+    env["PYTHONIOENCODING"] = "utf-8"
+
+    r = subprocess.run([sys.executable, "-m", "collector", "verify", report,
+                        "--evidence", ev],
+                       cwd=TOOLS, env=env, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=120)
+    out = (r.stdout or "") + (r.stderr or "")
+
+    check("T32 不因缺包而拒绝运行", "缺少必需的第三方依赖" not in out, out[:300])
+    check("T32 没有 traceback", "Traceback" not in out, out[:300])
+    check("T32 真的执行了校验", "幻觉校验" in out, out[:300])
+    check("T32 报出未收录引用", "C1-引用链接" in out, out[:300])
+    # 空证据库必然不通过，这是校验结论而非依赖故障
+    check("T32 退出码=2（校验结论）", r.returncode == 2, f"exit={r.returncode}")
+
+    # 对照组：collect 在同样缺包时必须被挡住
+    r2 = subprocess.run([sys.executable, "-m", "collector", "collect", "--max-fetch", "1"],
+                        cwd=TOOLS, env=env, capture_output=True, text=True,
+                        encoding="utf-8", errors="replace", timeout=120)
+    out2 = (r2.stdout or "") + (r2.stderr or "")
+    check("T32 collect 仍被挡住", "缺少必需的第三方依赖" in out2, out2[:200])
+
+
 @test("T29 缺 PyYAML 时 dry-run 要给提示而不是裸 traceback")
 def t29() -> None:
     """实测发现：缺 httpx/lxml 时 dry-run 已能照常出计划，但缺 PyYAML 时

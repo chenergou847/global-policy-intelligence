@@ -115,7 +115,7 @@ global-policy-intelligence/
 └── tools/                            # ★ 可执行采集层（依赖见上方的 requirements.txt）
     ├── sources.yaml                  # 声明式信源注册表（含 probe 实测状态）
     ├── collector/                    # 分级采集 / 正文回落链 / 存证 / 幻觉校验
-    ├── tests/                        # 86 项离线回归
+    ├── tests/                        # 100 项离线回归
     └── evals/                        # 25 项检索策略评测
 ```
 
@@ -181,10 +181,25 @@ python -m collector verify 报告.md --evidence ../evidence           # 校验�
 
 | 命令 | 缺 `httpx` 或 `lxml` | 缺 `PyYAML` | 退出码 |
 |---|---|---|---|
-| `doctor` | 正常跑完并列出缺哪个 | 正常跑完并列出缺哪个 | 0 齐全 / 2 有缺 |
+| `doctor` | **按能力分层报告**：哪些可用、哪些降级、各缺什么 | 同左 | 0 全部可用 / 2 有降级 |
 | `collect --dry-run` | **照常出计划**（只读配置，不需要联网/解析） | 报错并给安装命令 | 0 / 2 |
 | `collect`（真实采集） | 报错并给安装命令 | 报错并给安装命令 | 2 |
-| `verify` | 报错并给安装命令 | 报错并给安装命令 | 2 |
+| `verify` | **照常可用**（校验层零外部依赖） | **照常可用** | 0 |
+
+`doctor` 的输出长这样（只缺 `lxml` 时）——它不会把"部分降级"说成"装坏了"：
+
+```
+== 能力分层 ==
+  ✓ 幻觉校验 verify（C1–C4） —— 可用
+  ✓ 信源表与计划 dry-run —— 可用
+  ✗ 正文采集 collect —— 不可用（缺 lxml）
+      原因：需要联网与 HTML/XML 解析
+
+[需要处理] 以下能力不可用，缺的包是：lxml
+安装：python -m pip install lxml
+仍可用的能力：幻觉校验 verify（C1–C4）、信源表与计划 dry-run
+提示：只想校验报告的话，上面这些不需要任何第三方包。
+```
 
 报错时给出的是可直接执行的修复命令，不是裸 `traceback`：
 
@@ -194,6 +209,10 @@ $ python -m collector collect
 安装：python -m pip install httpx lxml PyYAML
 自检：python -m collector doctor
 ```
+
+设计取舍：按能力分层是因为各层真实依赖不同——**幻觉校验层只用标准库**
+（连报告里的链接、逐字引文、文号数字都能查），计划层只要 `PyYAML`，
+只有采集层需要联网与解析能力。所以缺包不等于"这工具不能用了"。
 
 设计取舍：`doctor` 与 `collect --dry-run` 刻意不依赖 `httpx`/`lxml`，
 因为它们只是"读配置 + 打印"，**这正是缺依赖的用户最该先跑的两条命令**；
@@ -207,7 +226,7 @@ $ python -m collector collect
 
 ```bash
 cd global-policy-intelligence/tools
-python tests/run_tests.py              # 86 项离线回归
+python tests/run_tests.py              # 100 项离线回归
 python evals/make_pdf_fixture.py       # 生成评测用 PDF fixture
 python evals/run_retrieval_evals.py    # 25 项检索策略评测（本地服务器，不联网）
 ```

@@ -135,7 +135,7 @@ set POLICY_INTEL_RENDER_CMD=my-render-cli
 ## 测试与评测
 
 ```bash
-python tests/run_tests.py              # 86 项离线回归（含上述三大坑）
+python tests/run_tests.py              # 100 项离线回归（含上述三大坑）
 python evals/make_pdf_fixture.py       # 生成评测用 PDF fixture
 python evals/run_retrieval_evals.py    # 25 项检索策略评测（本地静态服务器，不联网）
 ```

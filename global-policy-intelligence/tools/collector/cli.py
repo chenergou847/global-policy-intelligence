@@ -33,6 +33,18 @@ DEPS: dict[str, tuple[str, bool, str]] = {
 # 实际参与自检的包（pdfminer 与 pypdf 二者其一即可，故只列主要项）
 CHECK_MODULES = ("httpx", "lxml", "yaml", "pypdf", "pdfminer", "cssselect")
 
+# 能力分层：告诉用户"哪一层不能用"，而不是笼统说"依赖没装齐"。
+# 这么分是因为各层的真实依赖不同（实测过的分层，别凭印象改）：
+#   · 幻觉校验层只用标准库 + json，**不依赖任何第三方包**
+#   · 计划(dry-run)层只要 PyYAML（读配置）
+#   · 采集层要 httpx + lxml（联网 + 解析）
+CAPABILITIES: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    ("幻觉校验 verify（C1–C4）", (), "零外部依赖，任何环境可用"),
+    ("信源表与计划 dry-run", ("yaml",), "需要 PyYAML 读 sources.yaml"),
+    ("正文采集 collect", ("httpx", "lxml", "yaml"), "需要联网与 HTML/XML 解析"),
+)
+PDF_HINT = "装了 pypdf 或 pdfminer.six 可更完整提取 PDF 正文"
+
 
 def _try_import(name: str) -> bool:
     """真正 import 一次，而不是只用 importlib.util.find_spec。
@@ -88,18 +100,36 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     print("== 运行环境自检 ==")
     for key, value in caps.items():
         print(f"  {key}: {value}")
-    missing = [m for m in CHECK_MODULES if not caps.get(m)]
-    required_missing = [m for m in missing if DEPS.get(m, ("", False, ""))[1]]
-    if required_missing:
-        print(f"\n[错误] 缺少必需依赖: {', '.join(required_missing)}")
-        print("安装：" + _install_hint(required_missing))
+
+    print("\n== 能力分层 ==")
+    blocked: list[tuple[str, list[str]]] = []
+    for label, needed, why in CAPABILITIES:
+        missing = [m for m in needed if not caps.get(m)]
+        if missing:
+            blocked.append((label, missing))
+            print(f"  ✗ {label} —— 不可用（缺 {'、'.join(missing)}）")
+            print(f"      原因：{why}")
+        else:
+            print(f"  ✓ {label} —— 可用")
+
+    if blocked:
+        # 关键：区分"整体不可用"与"只有部分能力降级"。
+        # 只缺 lxml 时幻觉校验层仍可用，不该被报成"这工具装坏了"（实测踩到）。
+        all_missing = sorted({m for _label, ms in blocked for m in ms})
+        print("\n[需要处理] 以下能力不可用，缺的包是：" + "、".join(all_missing))
+        print("安装：" + _install_hint(all_missing))
+        if len(blocked) < len(CAPABILITIES):
+            usable = [label for label, _n, _w in CAPABILITIES
+                      if not any(label == b for b, _ in blocked)]
+            print("仍可用的能力：" + "、".join(usable))
+            print("提示：只想校验报告的话，上面这些不需要任何第三方包。")
         return 2
+
     if not caps.get("pypdf") and not caps.get("pdfminer"):
-        print("\n[提示] 未安装 pypdf/pdfminer，PDF 将使用内置标准库解析器（覆盖文字版 PDF，"
-              "扫描件会被标记为 scanned_pdf）。")
+        print("\n[提示] " + PDF_HINT + "（未装时扫描件会被标记为 scanned_pdf）。")
     if not caps.get("render_cmd"):
         print("[提示] 未配置 POLICY_INTEL_RENDER_CMD，JS 渲染站将标记为 blocked。")
-    print("\n结论：基础能力可用。")
+    print("\n结论：全部能力可用。")
     return 0
 
 
@@ -217,6 +247,13 @@ def cmd_collect(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
+    """幻觉校验：**零外部依赖**，任何 Python 环境都能跑。
+
+    曾经这里调用了 _require_deps()（要求 httpx+lxml+yaml 全齐），于是
+    "只想校验报告"的用户即使 pip 一个都没装成功也被挡住——而校验层
+    （verify/models/store）实际只用标准库。设计意图与 CLI 行为不一致，
+    是被 README 里的一句声明反向发现的（文档先写了、代码没做到）。
+    """
     # 先做输入检查，给出可操作的提示而不是让 open() 抛 FileNotFoundError
     if not os.path.isfile(args.report):
         print(f"找不到报告文件：{args.report}", file=sys.stderr)
@@ -227,10 +264,11 @@ def cmd_verify(args: argparse.Namespace) -> int:
         print("提示：先运行 python -m collector collect 生成证据库。", file=sys.stderr)
         return 2
 
-    blocked = _require_deps()
-    if blocked is not None:
-        return blocked
-    from . import verify as verify_mod
+    try:
+        from . import verify as verify_mod
+    except Exception as exc:  # noqa: BLE001
+        print(f"加载幻觉校验器失败：{type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
 
     argv = [args.report, "--evidence", args.evidence]
     if args.json:
