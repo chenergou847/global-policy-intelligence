@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+from itertools import zip_longest
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -66,6 +67,8 @@ def collect_listing(
 ) -> list[Article]:
     articles: list[Article] = []
     stype = source.type
+    if stype == "render":
+        raise ValueError("该源列表需要渲染；请用网页工具读取或配置静态/API 列表适配器")
 
     if stype in ("json_get", "json_api", "post_json", "shanghai_policy"):
         for url, body in listparse.build_page_targets(source):
@@ -114,6 +117,13 @@ def run_collect(
     options: CollectOptions | None = None,
 ) -> tuple[RunReport, dict[str, Any]]:
     opts = options or CollectOptions()
+    if opts.max_fetch < 0 or (opts.max_fetch == 0 and not opts.listing_only):
+        raise ValueError("正文采集 max_fetch 必须大于零；仅采列表请使用 --listing-only")
+    for value in (opts.since, opts.until):
+        if value:
+            dt.date.fromisoformat(value)
+    if opts.since and opts.until and opts.since > opts.until:
+        raise ValueError("since 不得晚于 until")
     report = RunReport(started_at=dt.datetime.now().isoformat(timespec="seconds"))
 
     # dry-run 走独立模块（只依赖 pyyaml，不碰 httpx/lxml）
@@ -131,10 +141,14 @@ def run_collect(
     registry: Registry = load_registry(registry_path)
     failures: list[dict[str, str]] = []
 
-    selected = [
-        s for s in registry.enabled
-        if not opts.sources or s.key in opts.sources
-    ]
+    selected = registry.select(opts.sources)
+    # Read before any requests or writes: a corrupt ledger must never be replaced.
+    index = load_index(archive_root)
+    contact = str(registry.meta.get("contact_ua") or "").strip()
+    if contact and "请在此填写" not in contact:
+        if not contact.isascii():
+            raise ValueError("meta.contact_ua 必须为 ASCII HTTP 请求头")
+        opts.net.user_agent = contact
 
     fetcher = Fetcher(opts.net)
     collected: list[Article] = []
@@ -142,16 +156,31 @@ def run_collect(
     archive_path = ""
     dupes: list[dict[str, Any]] = []
     kept_articles: list[Article] = []
+    batches: list[list[Article]] = []
 
     try:
         # ---------- 1/3 列表 + 初筛 ----------
         for source in selected:
+            attempt_start = len(fetcher.attempts)
             try:
                 items = collect_listing(source, fetcher, report)
             except Exception as exc:  # noqa: BLE001
                 failures.append({"source": source.name, "stage": "listing",
                                  "error": f"{type(exc).__name__}: {exc}"[:200]})
                 continue
+            listing_attempts = fetcher.attempts[attempt_start:]
+            def request_identity(attempt):
+                return attempt.request_id or attempt.url
+            successful_requests = {request_identity(a) for a in listing_attempts if a.ok}
+            failed = [a for a in listing_attempts if not a.ok and (
+                request_identity(a) not in successful_requests or (a.error or "").startswith("JSON 解析失败")
+            )]
+            if failed:
+                failures.append({"source": source.key, "stage": "listing",
+                                 "error": "; ".join(a.error or "请求失败" for a in failed)[-500:]})
+            elif not items:
+                failures.append({"source": source.key, "stage": "listing",
+                                 "error": "列表未解析出条目；无法区分空栏目与结构变化，请人工复核"})
 
             kept: list[Article] = []
             seen_urls: set[str] = set()
@@ -167,11 +196,15 @@ def run_collect(
             kept = kept[: source.max_items]
             report.bump(source.key, "kept", len(kept))
             collected.extend(kept)
+            batches.append(kept)
 
         # ---------- 2/3 正文抓取 ----------
         if not opts.listing_only:
             budget = max(0, opts.max_fetch - fetched_count)
-            for art in collected:
+            # Share a bounded detail budget across sources instead of exhausting it
+            # on the first listing. The caller's source order breaks ties.
+            fetch_queue = (art for row in zip_longest(*batches) for art in row if art is not None)
+            for art in fetch_queue:
                 if budget <= 0:
                     break
                 source = registry.by_key(art.source_key)
@@ -189,23 +222,42 @@ def run_collect(
                 budget -= 1
 
         # ---------- 3/3 去重 + 存证 ----------
-        kept_articles, dupes = dedupe(collected)
+        windowed = [art for art in collected if in_window(art, opts.since, opts.until)]
+        report_window_dropped = len(collected) - len(windowed)
+        kept_articles, dupes = dedupe(windowed)
+        for source in selected:
+            for status in FetchStatus:
+                report.bump(source.key, status.value, 0)
+                report.per_source[source.key][status.value] = 0
+        for art in kept_articles:
+            report.bump(art.source_key, art.fetch_status, 1)
         report.articles = kept_articles
         report.finished_at = dt.datetime.now().isoformat(timespec="seconds")
 
-        index = load_index(archive_root)
         entries = index.setdefault("entries", {})
         for art in kept_articles:
-            if not art.first_seen:
-                art.first_seen = today_str()
+            previous = entries.get(art.url)
+            first_seen = (previous or {}).get("first_seen") or str((previous or {}).get("fetched_at") or "")[:10]
+            art.first_seen = first_seen or art.first_seen or today_str()
+            art.fetched_at = report.finished_at
             # 一律落快照：即使没取得正文，也要留一条可审计记录（含 attempts 与失败原因），
             # 否则报告无法解释"哪些来源没拿到、为什么没拿到"。
             snap_path = snapshot_article(art, archive_root)
-            entries[art.url] = index_entry(art, snap_path)
+            row = index_entry(art, snap_path)
+            row["first_seen"] = art.first_seen
+            row["fetched_at"] = report.finished_at
+            history = list((previous or {}).get("history") or [])
+            if previous and previous.get("snapshot_path") != row["snapshot_path"]:
+                history.append({k: previous.get(k) for k in (
+                    "snapshot_id", "snapshot_path", "fetch_status", "content_hash", "fetched_at"
+                )})
+            row["history"] = history
+            entries[art.url] = row
         index["meta"] = {
             "updated_at": report.finished_at,
             "total": len(entries),
-            "full_text_rate": report.full_text_rate,
+            "full_text_rate": (sum(row.get("fetch_status") == "full" for row in entries.values()) / len(entries)) if entries else 0.0,
+            "run_full_text_rate": report.full_text_rate,
         }
         save_index(archive_root, index)
 
@@ -219,7 +271,15 @@ def run_collect(
         "run": report.to_dict(),
         "failures": failures,
         "duplicates": dupes,
+        "window_dropped_after_fetch": report_window_dropped,
         "archive_path": archive_path,
         "ledger_path": os.path.join(archive_root, "index.json"),
+        "coverage": {
+            "sources": [s.key for s in selected],
+            "regions": sorted({s.region for s in selected}),
+            "layers": sorted({s.layer for s in selected}),
+            "scope_complete": False,
+            "note": "有限信源注册表不代表全球覆盖；零命中不得解释为没有政策动态。",
+        },
     }
     return report, summary

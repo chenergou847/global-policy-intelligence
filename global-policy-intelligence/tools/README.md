@@ -1,141 +1,43 @@
-# 政策情报检索层 · collector
+# 采集与逐项证据校验
 
-这一层解决一个具体问题：**AI Agent 经常只能看见标题，看不见正文——却照样写出结论。**
-
-它把「检索」从临场搜索变成可执行的采集工程：声明式信源表 → 分级抓取 → 完整性判定
-→ 证据存证 → 确定性幻觉校验。
-
-> **安装方式见仓库根目录 [README](../README.md) 的「怎么用（两步）」** ——
-> 可以一句话交给 Agent 装（`帮我安装这个 Skill：<仓库地址>，并装好依赖`），
-> 也可以下载 ZIP 或 `git clone`，然后 `pip install -r ../requirements.txt`。
-
-## 快速开始
-
-**前提**：Python 3.10+，且运行环境里已有 `httpx`、`lxml`、`PyYAML`
-（三者都写在 Skill 根目录的 `../requirements.txt` 里，
-`pip install -r ../requirements.txt` 一次装齐）。
-本层**不需要额外下载任何东西**（没有自研 pip 包、没有二进制、没有构建步骤），
-但这三个包必须在环境里可用——缺了会直接报错，`doctor` 会告诉你是哪几个。
+从本目录运行 `python -m collector`。先按任务选择法域和信源；默认注册表仅包含美国和英国官方适配器，不代表全球覆盖。
 
 ```bash
-# 在 clone 出来的仓库根目录执行（即包含 global-policy-intelligence/ 的那一层）
-cd global-policy-intelligence/tools
-
-# 0) 环境自检：告诉你哪些能力可用、哪些会降级
 python -m collector doctor
-
-# 1) dry-run：只打印将要请求的地址与抓取预算，不发送任何请求（首次建议先跑这个）
-python -m collector collect --dry-run
-
-# 2) 采集（建议先用小预算试跑；--sources 留空 = 用 sources.yaml 里 enabled 的信源）
-python -m collector collect --sources federal_register,uk_legislation --max-fetch 10
-
-# 3) 只采列表不抓正文（先看有哪些新条目）
-python -m collector collect --listing-only --json
-
-# 4) 按时间窗口采集
-python -m collector collect --since 2026-09-01 --until 2026-09-30
-
-# 5) 对写好的报告做幻觉校验
-python -m collector verify 报告.md --evidence ../evidence
+python -m collector collect --sources nfra_dongtai --dry-run
+python -m collector collect --sources federal_register --since 2026-09-01 --until 2026-09-30 --max-fetch 10 --evidence /path/to/project/evidence
+python -m collector verify report.md --claims claims.json --evidence /path/to/project/evidence
 ```
 
-> 首次使用前，建议先在 `sources.yaml` 里把 `meta.contact_ua` 的占位邮箱改成你的真实
-> 联系方式——采集会在 UA 里带上它，便于站点管理员识别与联系。
+`--sources` 可显式选择默认停用的源；未知 key 会报错。正文预算必须大于零，纯列表任务使用 `--listing-only`。计划与真实采集共用信源选择和分页逻辑。
 
-退出码约定：`0` 成功；`2` 校验未通过或缺少依赖；`3` 有信源失败（让定时任务能看见，
-而不是假装一切正常）。
+## 网络
 
-## 产物
+HTTPX 读取 HTTP_PROXY、HTTPS_PROXY、ALL_PROXY、NO_PROXY；本机请求默认绕过代理。`--direct` 忽略全部环境代理；`--no-direct-fallback` 禁用网络错误后的直连回落。没有全局官方域名直连假设。HTTP 403/404/410 不通过切换路径绕过。
 
-| 路径 | 内容 |
-|---|---|
-| `../evidence/index.json` | 证据台账（19 字段，含 `fetch_status` / 快照哈希 / 首尾指纹 / attempts） |
-| `../evidence/snapshots/<年>/<月>/<源>/<id>.json` | 正文快照（可审计、可复查、可重建引用） |
-| `../evidence/<日期>_全文存档.md` | 人类可读全文存档（未取得正文的条目会写明原因与已试路径） |
-| `tools/evals/.evidence/` | 离线评测用的证据库（可随时删除重建） |
+响应以流方式读取并限制解码后的大小。超限内容被拒绝，不会伪装成完整正文。每篇条目的 attempts 只记录该篇的抓取请求。有效的 ASCII `meta.contact_ua` 会用于 HTTP 请求头。
 
-## 缺依赖时的行为（实测）
+## 存证
 
-**不自动安装**，也不降级。命令直接停并给出安装命令：
+`index.json` 为索引；`snapshots/` 为正文与抓取状态快照。索引原子写入，损坏索引明确报错。同 URL 的变化保留历史快照引用。快照读取只允许证据库内路径。
 
-| 命令 | 缺 `httpx`/`lxml` | 缺 `PyYAML` | 退出码 |
-|---|---|---|---|
-| `doctor` | 跑完并列出缺哪个 | 跑完并列出缺哪个 | 0 / 2 |
-| `collect --dry-run` | **照常出计划** | 报错 | 0 / 2 |
-| `collect` / `verify` | 报错 | 报错 | 2 |
+去重保留更完整、更权威的副本。同标题同月份不足以证明同一政策；不同文号或修订内容必须保留。
 
-`dryrun.py` 刻意只依赖 `registry`（进而只依赖 `pyyaml`），不导入 `httpx`/`lxml`：
-缺依赖的用户最该先跑 `--dry-run` 看清目标地址，它不能被联网/解析能力拦住。
-`tools/tests/run_tests.py` 的 T28 用 AST 静态检查 + 实跑锁住这个约束。
+## 校验
 
-## 架构
+`verify` 默认严格模式，缺少 claims ledger 返回 2。每项核心事实/推论需引用可读 full L1/L2 快照；引文和事实数字只在该项引用的快照中核对。
 
-按**依赖**分层（而不是按功能），这样"只想做校验"的用户可以完全不装第三方包：
+`company` 和 `assumption` 声明不作为公开政策事实自动核验，须在报告中明确标记。`inference` 的成立条件、因果和适用范围仍需人工检查。脚本不能自动证明台账覆盖了所有重要正文。
 
-```
-零外部依赖（纯标准库）—— 幻觉校验与存证层，任何环境可直接跑
-  models.py     数据模型与四态定义
-  store.py      快照 / 证据索引 / 内容级去重 / 全文存档
-  verify.py     确定性幻觉校验 C1–C4（只用标准库，故意不依赖 lxml）
-  pdfx.py       PDF 正文提取（zlib 抽文本算子，扫描件显式失败）
-  pages.py      分页目标展开（dry-run 与真抓取共用同一实现）
+`--legacy-checks-only` 可运行原有 C1-C4 全局匹配，仅用于迁移。不能据此声称报告通过严格验收。
 
-需要 lxml —— 解析层
-  extract.py    正文与元数据抽取 + 完整性四态判定（防"假正文"）
-  listparse.py  列表解析：JSON / HTML / RSS / Atom / sitemap
+退出码：0 为已执行检查通过/计划成功/采集成功；2 为输入、依赖或审计失败；3 为采集受限（信源失败、无正文等）。0 不表示检索覆盖完整或分析正确。
 
-需要 httpx —— 网络层
-  net.py        HTTP 客户端：代理分流修复、限速、重试、内容类型判定、尝试记录
-
-组合层
-  fetch.py      正文回落链：api → text → html → pdf → render → 明确失败
-  registry.py   sources.yaml 声明式信源注册表（需 PyYAML，仅 1 处 yaml.safe_load）
-  run.py        采集编排
-  dryrun.py     只读配置的计划输出（只需 PyYAML，不碰 httpx/lxml）
-  cli.py        命令行入口（依赖清单集中在 DEPS 常量，只此一处）
-```
-
-## 三个真实踩过的坑（都已修复并有回归测试）
-
-1. **PDF 二进制被当成正文**：详情页链接直接返回 PDF 时，若按 URL 后缀判断就会把二进制
-   存进证据库并标成 `full`。现在一律靠内容判定（`%PDF-` magic bytes）。
-   → 回归测试 T24/T25
-2. **`str in bytes` 导致静态 HTML 源全线静默失败**：`"%PDF-" in raw[:1024]`（str 找 bytes）
-   抛 `TypeError`，又被上层 `try` 吞掉，结果是**每一个静态 HTML 源都变成 blocked**，
-   报告看起来像"这些来源没有动态"。这是本项目最危险的一类 bug。
-   → 回归测试 T27（用本地服务器 + 真实 Fetcher 端到端跑）
-3. **镜像兜底把检索工具自己的界面当正文**：Wayback 默认快照地址返回工具栏页面（仅 207 字
-   全是短行链接）却越过了 200 字阈值。现在必须用 `id_` 原始内容地址，并识别导航/工具页。
-   → 回归测试 T26
-
-## 环境相关的两个已知问题
-
-- **代理**：本机环境的 `NO_PROXY` 含 `[::1]` 这种写法，会让 httpx 抛
-  `InvalidURL: Invalid port`，导致**所有**请求失败。`net.py` 会在导入时修好它。
-  另外实测本机代理在部分境内政府站上 TLS 握手失败而直连正常，因此实现了
-  **按域名分流 + 代理失败自动改直连**。
-- **写入权限**：Windows 沙箱下 `tempfile.mkdtemp` 创建的目录无法写入，
-  因此测试与证据库都建在工作区内的普通目录。
-
-## 能力边界（必须如实披露）
-
-- 未配置 `POLICY_INTEL_RENDER_CMD` 时，JS 渲染站一律标 `blocked`；
-- 未装 `pypdf`/`pdfminer` 时，扫描版 PDF 会被识别为 `scanned_pdf` 而非正文；
-- 不绕过验证码、登录墙、付费墙——遇对抗性防护即标 blocked 并给替代路径；
-- `verify` 只能保证"可核验事实都在证据里"，**不能**判断结论方向是否正确。
-
-配置渲染器（可选）：
+## 开发
 
 ```bash
-# 任何"接受 URL、把渲染后 HTML 打到 stdout"的命令都可以
-set POLICY_INTEL_RENDER_CMD=my-render-cli
+python check.py
+python -m unittest discover -s tests -p "test_*.py"
 ```
 
-## 测试与评测
-
-```bash
-python tests/run_tests.py              # 100 项离线回归（含上述三大坑）
-python evals/make_pdf_fixture.py       # 生成评测用 PDF fixture
-python evals/run_retrieval_evals.py    # 25 项检索策略评测（本地静态服务器，不联网）
-```
+fixtures 与本机 HTTP 服务用于稳定回归；外部政府站点可用性需单独核验。分析评估见 `../evals/README.md`。

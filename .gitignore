@@ -9,6 +9,8 @@ global-policy-intelligence/tools/evals/.evidence/
 global-policy-intelligence/tools/evals/*.rendered
 global-policy-intelligence/tools/tests/.tmp/
 global-policy-intelligence/tools/tests/.diag/
+global-policy-intelligence/tools/.tmp*/
+.venv/
 global-policy-intelligence/tools/tests/fixtures_site/
 
 # 本地配置与凭据（切勿入库）

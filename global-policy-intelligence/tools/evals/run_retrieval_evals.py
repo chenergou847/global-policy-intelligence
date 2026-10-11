@@ -129,6 +129,9 @@ def check_metrics(report: dict, index: dict) -> None:
     check("M02 有 full 级证据", statuses.get("full", 0) >= 2, str(statuses))
     check("M03 识别出 listing_only", statuses.get("listing_only", 0) >= 1, str(statuses))
     check("M04 识别出 blocked", statuses.get("blocked", 0) >= 1, str(statuses))
+    check("M07 PDF 回落链实际取得正文",
+          any(r.get("fetch_method", "").startswith("pdf:") and r["fetch_status"] == "full" for r in rows),
+          "PDF fixture 未经过正文解析")
 
     # 关键质量断言：任何被标 full 的条目，正文里都不得出现 PDF 二进制/镜像工具栏
     bad_full = []
@@ -182,6 +185,15 @@ def check_hallucination_regression(index: dict) -> None:
     check("H05 编造报告整体不通过", not bad_result.ok, "竟通过了")
     check("H06 统计含证据强度分布", "evidence_counts" in good_result.stats,
           str(good_result.stats))
+    strict_claim = row["head_fingerprint"][:80]
+    strict_report = f"# 报告\n\n[C1] {strict_claim}\n来源：{url}\n"
+    strict_result = vf.verify_report(strict_report, ARCHIVE, strict=True, claims={
+        "schema_version": 1, "claims": [{
+            "id": "C1", "text": strict_claim, "kind": "fact", "importance": "core", "evidence": [url],
+        }],
+    })
+    check("H07 实际采集快照通过严格声明审计", strict_result.ok,
+          json.dumps([f.to_dict() for f in strict_result.errors], ensure_ascii=False)[:300])
 
     print("\n--- 幻觉回归 ---")
     print("合格报告 ok =", good_result.ok, "| stats =", json.dumps(good_result.stats, ensure_ascii=False))
@@ -214,6 +226,8 @@ def main() -> int:
         check_hallucination_regression(index)
         if summary.get("failures"):
             print("\n信源失败记录：", json.dumps(summary["failures"], ensure_ascii=False)[:400])
+        check("M08 fixture 信源全部成功读取列表", not summary.get("failures"),
+              str(summary.get("failures")))
         if summary.get("duplicates"):
             print("去重记录：", json.dumps(summary["duplicates"], ensure_ascii=False)[:300])
     finally:

@@ -110,6 +110,20 @@ class Registry:
     def enabled(self) -> list[Source]:
         return [s for s in self.sources if s.enabled]
 
+    def select(self, keys: list[str] | None = None) -> list[Source]:
+        """Explicit keys opt in even when disabled; defaults contain official sources only."""
+        if keys:
+            wanted = list(dict.fromkeys(keys))
+            unknown = [key for key in wanted if self.by_key(key) is None]
+            if unknown:
+                raise ValueError("未知信源 key：" + ", ".join(unknown))
+            selected = [self.by_key(key) for key in wanted]
+        else:
+            selected = [s for s in self.enabled if s.layer in ("L1", "L2")]
+        if not selected:
+            raise ValueError("没有可采集的信源；请用 --sources 明确指定 key，或启用 L1/L2 信源")
+        return selected
+
 
 # ------------------------------------------------------------------ 加载
 def _as_str_list(value: Any) -> list[str]:
@@ -155,13 +169,41 @@ def load_registry(path: str) -> Registry:
     if not os.path.exists(path):
         raise FileNotFoundError(f"信源配置不存在: {path}")
     with open(path, encoding="utf-8") as f:
-        raw = yaml.safe_load(f) or {}
+        try:
+            raw = yaml.safe_load(f) or {}
+        except yaml.YAMLError as exc:
+            raise ValueError(f"无效 YAML 信源配置：{exc}") from exc
+    if not isinstance(raw, dict) or not isinstance(raw.get("sources"), list):
+        raise ValueError("信源配置必须包含 sources 数组")
+    if raw.get("meta") is not None and not isinstance(raw["meta"], dict):
+        raise ValueError("meta 必须为对象")
 
     sources: list[Source] = []
+    seen: set[str] = set()
     for idx, item in enumerate(raw.get("sources") or []):
+        if not isinstance(item, dict) or not isinstance(item.get("key"), str) or not item["key"].strip():
+            raise ValueError(f"sources[{idx}] 缺少有效 key")
+        key = item["key"]
+        if key in seen:
+            raise ValueError(f"重复信源 key：{key}")
+        seen.add(key)
+        for flag in ("enabled", "allow_insecure_tls", "human_assist"):
+            if flag in item and not isinstance(item[flag], bool):
+                raise ValueError(f"{key}.{flag} 必须为 YAML 布尔值")
+        if item.get("layer", "L1") not in ("L1", "L2", "L3", "L4", "L5"):
+            raise ValueError(f"{key}.layer 必须为 L1/L2/L3/L4/L5")
+        if item.get("type", "html_list") not in (
+            "json_get", "json_api", "post_json", "shanghai_policy", "html_list", "rss", "atom", "feed", "sitemap", "render"
+        ):
+            raise ValueError(f"{key}.type 不受支持")
+        for section in ("listing", "extract", "detail"):
+            if item.get(section) is not None and not isinstance(item[section], dict):
+                raise ValueError(f"{key}.{section} 必须为对象")
         listing_cfg = item.get("listing") or {}
         extract_cfg = item.get("extract") or {}
         detail_cfg = item.get("detail") or {}
+        if extract_cfg.get("html") is not None and not isinstance(extract_cfg["html"], dict):
+            raise ValueError(f"{key}.extract.html 必须为对象")
         html_cfg = extract_cfg.get("html") or {}
         sources.append(
             Source(
@@ -218,4 +260,13 @@ def load_registry(path: str) -> Registry:
                 probe=str(item.get("probe") or "unknown"),
             )
         )
+        source = sources[-1]
+        if not source.listing.url.startswith(("http://", "https://")):
+            raise ValueError(f"{key}.listing.url 必须为 HTTP(S) 地址")
+        if source.listing.pages < 1 or source.listing.rows_per_page < 1 or source.max_items < 1:
+            raise ValueError(f"{key} 页数、每页数量和 max_items 必须大于零")
+        if source.min_body_chars < 1 or source.max_body_chars < 0 or source.days < 0:
+            raise ValueError(f"{key} 正文字数或 days 无效")
+        if any(t not in ("api", "text", "html", "pdf", "render") for t in source.detail.resolved_tiers()):
+            raise ValueError(f"{key}.detail.tiers 包含未知抓取级")
     return Registry(sources=sources, meta=raw.get("meta") or {}, path=path)

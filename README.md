@@ -1,244 +1,115 @@
 # 全球政策与监管情报分析
 
-面向**企业管理层、公共事务、法务和财务团队**的全球政策与监管情报分析技能。
+将官方政策变化转化为企业影响、优先级和行动。适用于政策影响分析、监管扫描、多法域比较与既有报告更新。
 
-用于分析国家、地区、省州、市县区层面的政策方向、法律法规、监管与执法趋势、地方实施
-和行业舆情，解释政策背后的**宏观与治理动因**及其对**具体公司**的影响，输出总体利好/利空
-判断、P0–P3 合规风险与政策机会、行动责任和未来关注点。
+技能目录是仓库中的 **`global-policy-intelligence/` 子目录**，不是仓库根目录。安装后，`SKILL.md` 必须直接位于技能文件夹内。
 
----
-
-## 怎么用（两步）
-
-### 第一步：装到你的 Agent 里，三选一
-
-#### ① 让 Agent 自己装（最省事）—— 直接对它说：
-
-```
-帮我安装这个 Skill：https://github.com/chenergou847/global-policy-intelligence
-装到你的 Skills 目录，并装好依赖：pip install -r global-policy-intelligence/requirements.txt
-（必需依赖只有三个：httpx、lxml、PyYAML；装完用 python -m collector doctor 自检）
-```
-
-Agent 会自己 clone、放进 Skills 目录、装依赖并跑自检。装完把 `doctor` 的输出贴给你看即可。
-
-#### ② 下载 ZIP
-
-点仓库右上角 **Code → Download ZIP**，解压得到 `global-policy-intelligence` 文件夹，
-放进你 Agent 的 Skills 目录（各 Agent 不同，见下表）。
-
-#### ③ git clone
+## 安装
 
 ```bash
-git clone https://github.com/chenergou847/global-policy-intelligence
-pip install -r global-policy-intelligence/requirements.txt    # 装依赖（在刚 clone 出的目录里执行）
-# 再把 global-policy-intelligence 文件夹放进 Skills 目录，
-# 例如 ~/.codex/skills/global-policy-intelligence（各 Agent 的目录不同）
+git clone https://github.com/chenergou847/global-policy-intelligence.git
+cd global-policy-intelligence
+python -m pip install -r global-policy-intelligence/requirements.txt
 ```
 
-> `requirements.txt` 在 **Skill 根目录**（`global-policy-intelligence/`）下。
-> 所以无论你是在仓库根目录还是已经进了 Skill 目录，`pip install -r requirements.txt`
-> 都能找到它——只要当前目录对得上。
+将当前仓库下的 `global-policy-intelligence/` 子目录整体复制到 Agent 的技能目录。例如 Codex 的目标为 `~/.codex/skills/global-policy-intelligence/`。保留其中的 `SKILL.md`、`references/`、`tools/`、`evals/` 和 `requirements.txt`。
 
-**常见 Agent 的 Skills 目录**（不确定就先问你的 Agent "你的 skills 目录在哪"）：
+下载 ZIP 时也要打开外层仓库文件夹，再复制内层技能文件夹。安装工具支持 GitHub 子路径时，使用 `global-policy-intelligence` 作为安装路径。
 
-| Agent | 目录 |
-|---|---|
-| Codex CLI | `~/.codex/skills/` |
-| Claude Code | `~/.claude/skills/` |
-| DSH | `~/.dsh/skills/` |
-| 其他 | 多数是 `~/.<agent>/skills/`；也支持在项目内放 `.skills/` 或 `.agent/skills/` |
+也可以直接对 Agent 说：
 
-> 装的是**整个仓库**（含 `tools/` 采集层），不是只复制 `SKILL.md`——
-> 采集层是这个技能能拿到正文、不瞎写结论的关键。
+> 安装 https://github.com/chenergou847/global-policy-intelligence 中的 global-policy-intelligence 子目录，保留完整技能文件夹，安装其 requirements.txt，进入 tools 运行 doctor。不要把外层仓库当作技能根目录。
 
-### 第二步：装完先自检，再开始用
+Python 3.10+。采集使用 HTTPX、lxml、PyYAML、cssselect、pypdf；计划只需要 PyYAML；证据校验只使用 Python 标准库。建议在独立虚拟环境安装依赖。
+
+## 使用
+
+在技能的 `tools/` 目录执行：
 
 ```bash
-cd <你的 Skills 目录>/global-policy-intelligence/tools
-
-python -m collector doctor          # ① 自检：哪些能力可用、哪些会降级
-python -m collector collect --dry-run   # ② 看清将要请求哪些地址（不发任何请求）
-python -m collector collect --max-fetch 10   # ③ 小批量真跑一次，确认能拿到正文
+python -m collector doctor
+python -m collector collect --dry-run --sources federal_register
+python -m collector collect --sources federal_register --max-fetch 10 --evidence /path/to/project/evidence
+python -m collector verify /path/to/report.md --claims /path/to/claims.json --evidence /path/to/project/evidence
 ```
 
-`doctor` 会明确告诉你缺什么、什么会降级。第 ③ 步跑通后，就可以直接把任务交给 Agent
-（"帮我分析最近 3 个月欧盟数据跨境规则对我们新加坡托管业务的影响"），
-它会在需要时调用采集层并用 `verify` 做幻觉校验。
+Windows 路径同样支持；输出统一使用 UTF-8。
 
-> **首次采集前建议**：把 `tools/sources.yaml` 里 `meta.contact_ua` 的占位邮箱
-> 换成你的真实联系方式——采集会在 User-Agent 里带上它，便于站点管理员识别与联系。
+任务可直接交给 Agent，例如：“分析近三个月欧盟数据规则对我们新加坡托管业务的影响，列出法务行动与待确认项。”简单问题采用短答；完整扫描采用管理层报告；更新任务只分析变化及其影响。
 
-### 三条注意
+### 信源覆盖
 
-1. **必需依赖只有三个**（`httpx` / `lxml` / `PyYAML`），已在 `requirements.txt` 里。
-   缺任何一个都会**明确报错并给出安装命令**，不会静默降级、也不会跳过校验硬跑。
-2. **`--dry-run` 只需要 `PyYAML`**：它只读 `sources.yaml`、不发请求、不解析 HTML，
-   所以缺 `httpx`/`lxml` 时照常可用，专门给"先看看它会请求谁"这个场景。
-   但缺 `PyYAML` 它也跑不了（读不了配置）——三者里它是最靠底层的一个。
-3. **采集层不会自动装依赖**：它只把安装命令打给你，装不装、装到哪个 Python 环境由你决定。
+`sources.yaml` 是有限的站点适配器集合，目前以保险、金融议题为主。默认只有美国 Federal Register 与英国立法官方源，**不等于全球政策覆盖**。研究必须先按企业实际法域、业务和时间窗口建立覆盖清单；注册表缺少的法域使用网页工具检索官方原文或补充适配器。
 
----
+`--sources` 显式选择任何已注册 key，包括 `enabled: false` 的源；未知 key 或空选择返回错误。停用通常意味着未经验证或访问困难，显式选择不改变其可信度。Artemis 为 L3 行业线索，必须显式选择。
 
-## 输出内容
+网络请求失败、列表无法解析和正文未取得均会记录原因。零命中不能解释为“没有政策动态”。
 
-| 输出项 | 说明 |
-| --- | --- |
-| 总体判断 | 利好 / 利空 / 中性偏利好 / 中性偏利空，附影响程度与置信度 |
-| 合规风险 | 按 P0–P3 分级 |
-| 政策机会 | 可争取的政策窗口，与风险分开列账 |
-| 行动责任 | 动作、责任角色、时限、依赖、验收标准 |
-| 未来关注点 | 需持续跟踪的信号与下一复查日 |
-| 来源台账 | 19 字段可审计证据（含正文状态、快照哈希、逐字引文） |
+### 证据与校验
 
-## 内置专题分析框架
+权威层级 `L1-L5`、正文获取状态、法律生效状态、分析置信度分别记录。`full` 是采集器的完整性候选标记，仍需核对正文边界、附件、修订和适用条款。仅启发式 HTML 抽取或混合扫描 PDF 会降级为 `partial`。
 
-针对国际政治经济议题设有专门框架：地缘政治、国别政治生态、科技竞争与供应链重构、
-制裁与出口管制。
+严格校验要求 `claims.json` 把报告中的事实、推论、公司信息和假设逐项对应到证据 URL：
 
-## 目录结构
-
-```
-global-policy-intelligence/
-├── SKILL.md                          # 七步工作流程（含第三步检索与核验纪律）
-├── requirements.txt                  # 采集层依赖（httpx / lxml / PyYAML）
-├── references/
-│   ├── retrieval-pipeline.md         # ★ 七层检索流水线（本技能的核心方法论）
-│   ├── evidence-and-sources.md       # 证据分级、禁止来源、台账 19 字段
-│   ├── intake-and-scope.md           # 范围与时间尺度校准
-│   ├── policy-analysis-framework.md  # 政策动因与传导链
-│   ├── impact-and-priority.md        # 影响评估与 P0–P3
-│   ├── geopolitics-and-tech-competition.md
-│   ├── report-template.md            # 报告模板（含 2.5 检索与核验说明）
-│   └── quality-and-boundaries.md      # 交付前核查（含五个阻断项）
-├── evals/evals.json                  # 11 项评测：4 项分析质量 + 7 项检索策略
-└── tools/                            # ★ 可执行采集层（依赖见上方的 requirements.txt）
-    ├── sources.yaml                  # 声明式信源注册表（含 probe 实测状态）
-    ├── collector/                    # 分级采集 / 正文回落链 / 存证 / 幻觉校验
-    ├── tests/                        # 100 项离线回归
-    └── evals/                        # 25 项检索策略评测
+```json
+{
+  "schema_version": 1,
+  "claims": [
+    {
+      "id": "C1",
+      "text": "本办法自2026年11月1日起施行。",
+      "kind": "fact",
+      "importance": "core",
+      "evidence": ["https://example.gov/policy/1"]
+    }
+  ]
+}
 ```
 
-## 为什么需要采集层
+示例 URL 仅展示格式。实际校验必须使用采集并存证的原文 URL。完整契约见 [报告模板](global-policy-intelligence/references/report-template.md)。
 
-AI Agent 做政策检索时最常见的失败不是"搜不到"，而是：
-
-> **只看见标题、摘要或 JS 骨架页，却照样写出结论。**
-
-本技能用两层设计把这个漏洞堵住：
-
-**1. 结论强度由材料级别决定（硬闸门）**
-
-| `fetch_status` | 含义 | 允许的结论强度 |
-|---|---|---|
-| `full` | 取得完整正文 | 可支撑核心结论（仍须附逐字引文） |
-| `partial` | 正文被截断或缺字段 | 只能中/低置信度 |
-| `listing_only` | 只有标题与链接 | **不得支撑任何事实性结论** |
-| `scanned_pdf` | PDF 无文字层 | 须 OCR/VLM，否则等同 `listing_only` |
-| `blocked` | 反爬/登录墙/渲染失败 | **只能写"未取得正文"** |
-| 模型自身知识 | 未检索 | **不得出现在任何政策事实、文号、日期中** |
-
-**2. 可执行校验（C1–C4）**
+核心 `fact/inference` 必须对应可读 `full`、L1/L2 快照。事实的引文、日期、文号、数字只与该项所引证据匹配，不能用另一份无关文件中的相同数字凑过检查。公司自有数据、假设与推论的语义需人工复核。
 
 ```bash
-cd tools
-python -m collector verify 报告.md --evidence ../evidence
+# 旧报告迁移时可显式运行兼容检查；不代表严格验收
+python -m collector verify report.md --evidence evidence --legacy-checks-only
 ```
 
-| 检查 | 拦截的幻觉类型 |
-|---|---|
-| C1 引用链接 | 编造链接、"看起来很像真的"但从未访问的 URL |
-| C2 逐字引文 | 改写式引用、凭记忆编造条款 |
-| C3 文号数字 | 编造文号、金额、门槛、日期 |
-| C4 证据强度 | "只有标题却写出结论" |
+机器检查通过不证明法律适用、因果推论正确，也不能证明正文所有重要结论都已进入台账。交付前仍需检查台账覆盖和推理质量。
 
-> 边界：C1–C4 只保证"可核验事实都在证据里"，**不判断结论方向是否正确**。
+## 检查与评估
 
-## 采集层命令参考
-
-装好之后（见开头「怎么用」），`cd <Skills 目录>/global-policy-intelligence/tools` 后可用：
+在仓库根目录安装依赖后：
 
 ```bash
-python -m collector doctor                    # 环境与能力自检
-python -m collector collect --dry-run         # 只打印将要请求的地址，不发任何请求
-python -m collector collect --max-fetch 10    # 采集正文（建议先设小预算）
-python -m collector collect --listing-only --json   # 只采列表，看有哪些新条目
-python -m collector collect --since 2026-09-01 --until 2026-09-30   # 按时间窗口
-python -m collector verify 报告.md --evidence ../evidence           # 校验报告有无幻觉
+python global-policy-intelligence/tools/check.py
 ```
 
-**前提**：Python 3.10+，且运行环境里已有 `requirements.txt` 中的三个包
-（`httpx` / `lxml` / `PyYAML`）。这里的"零外部依赖"指的是**不需要额外下载本项目所需的
-任何东西**（没有自研 pip 包、没有二进制、没有构建步骤），**不是指任何 Python 环境都能直接跑**。
+检查包含原有回归、逐项证据校验、存证完整性、PDF/CSS 解析和本机 HTTP 流水线。GitHub Actions 在 Windows/Linux、Python 3.10/3.12 运行相同检查，不依赖外部站点稳定性。
 
-装了 `pypdf` 或 `pdfminer.six` 会更好（PDF 正文提取更完整），没装也能解析文字版 PDF，
-扫描件会被明确标记为 `scanned_pdf` 而不是当成正文。
+分析质量评估与程序测试分开：`evals/evals.json` 保留真实任务，`tools/evals/grade_analysis.py` 校验独立评审提交的逐项评分和报告证据。详见 [评估说明](global-policy-intelligence/evals/README.md)。未执行的分析任务不会被计为通过。
 
-### 缺依赖时到底会怎样（实测）
+## 目录
 
-**不会自动安装**，也不会降级成"跳过校验照样跑"——命令直接停，并告诉你怎么修。
-下面的行为是逐项实测的结果：
-
-| 命令 | 缺 `httpx` 或 `lxml` | 缺 `PyYAML` | 退出码 |
-|---|---|---|---|
-| `doctor` | **按能力分层报告**：哪些可用、哪些降级、各缺什么 | 同左 | 0 全部可用 / 2 有降级 |
-| `collect --dry-run` | **照常出计划**（只读配置，不需要联网/解析） | 报错并给安装命令 | 0 / 2 |
-| `collect`（真实采集） | 报错并给安装命令 | 报错并给安装命令 | 2 |
-| `verify` | **照常可用**（校验层零外部依赖） | **照常可用** | 0 |
-
-`doctor` 的输出长这样（只缺 `lxml` 时）——它不会把"部分降级"说成"装坏了"：
-
-```
-== 能力分层 ==
-  ✓ 幻觉校验 verify（C1–C4） —— 可用
-  ✓ 信源表与计划 dry-run —— 可用
-  ✗ 正文采集 collect —— 不可用（缺 lxml）
-      原因：需要联网与 HTML/XML 解析
-
-[需要处理] 以下能力不可用，缺的包是：lxml
-安装：python -m pip install lxml
-仍可用的能力：幻觉校验 verify（C1–C4）、信源表与计划 dry-run
-提示：只想校验报告的话，上面这些不需要任何第三方包。
+```text
+repository/
+  README.md
+  .github/workflows/checks.yml
+  global-policy-intelligence/       <- 安装这个目录
+    SKILL.md
+    requirements.txt
+    references/
+    evals/
+    tools/
+      collector/
+      sources.yaml
+      check.py
+      tests/
+      evals/
 ```
 
-报错时给出的是可直接执行的修复命令，不是裸 `traceback`：
+## 开源组件与边界
 
-```
-$ python -m collector collect
-缺少必需的第三方依赖：httpx、lxml、yaml
-安装：python -m pip install httpx lxml PyYAML
-自检：python -m collector doctor
-```
+[cssselect](https://cssselect.readthedocs.io/) 负责标准 CSS 解析；[pypdf](https://pypdf.readthedocs.io/) 负责 PDF 文字层解析，替代原有自制转换和正则 PDF 解析。[HTTPX](https://www.python-httpx.org/) 负责连接池与环境代理路由。通过依赖调用，不复制第三方源码；第三方许可证见各项目及安装包。
 
-设计取舍：按能力分层是因为各层真实依赖不同——**幻觉校验层只用标准库**
-（连报告里的链接、逐字引文、文号数字都能查），计划层只要 `PyYAML`，
-只有采集层需要联网与解析能力。所以缺包不等于"这工具不能用了"。
-
-设计取舍：`doctor` 与 `collect --dry-run` 刻意不依赖 `httpx`/`lxml`，
-因为它们只是"读配置 + 打印"，**这正是缺依赖的用户最该先跑的两条命令**；
-真实采集与幻觉校验则需要联网与 HTML 解析能力——**拿不到正文就不该出结论**，
-所以它们宁可停下也不降级。
-
-超出本工具能力的是：**它不会替用户执行 `pip install`**。Agent 会看到上面那段
-提示，但要不要装、用哪个 Python 环境装，需要由你决定。
-
-## 测试与评测
-
-```bash
-cd global-policy-intelligence/tools
-python tests/run_tests.py              # 100 项离线回归
-python evals/make_pdf_fixture.py       # 生成评测用 PDF fixture
-python evals/run_retrieval_evals.py    # 25 项检索策略评测（本地服务器，不联网）
-```
-
-两个主指标：**正文获取率**（`full` 条目占比）与**引用可核验率**
-（台账中 `URL + 访问日期 + 快照哈希 + 逐字引文` 四项齐全比例，目标 100%）。
-
-## 合规
-
-只采集公开渠道信息；保留原文链接与快照以便核验；不使用任何内部资料；
-**不绕过验证码、登录墙、付费墙**——遇对抗性防护即标记并给出替代路径。
-
-## 专业边界
-
-本技能提供政策与经营影响分析，不替代当地执业律师、税务师或其他专业机构的正式意见。
+只采集公开页面，不绕过验证码、登录墙或付费墙。内部资料仅在用户授权和工具可用时读取，不得进入外部搜索词。本技能不替代当地专业法律或税务意见。

@@ -83,6 +83,11 @@ def postprocess(
     status, default_reason = ex.classify_status(
         html_for_status, text, source.min_body_chars, source.max_body_chars
     )
+    if status == FetchStatus.FULL.value and method in (
+        "html:heuristic", "html:fallback", "render:heuristic", "render:fallback"
+    ):
+        status = FetchStatus.PARTIAL.value
+        default_reason = "仅启发式抽取，正文边界与完整性需人工复核"
     reason = (reasons or {}).get(status, default_reason)
     outcome = FetchOutcome(
         text=text,
@@ -90,7 +95,7 @@ def postprocess(
         method=method,
         reason=reason,
         title=title or article.title,
-        date=ex.parse_any_date(text) or ex.parse_any_date(date) or article.date,
+        date=ex.parse_any_date(date) or article.date or ex.parse_publication_date(text),
         docno=docno or ex.extract_docno(text) or article.docno,
         issuer=ex.extract_issuer(text),
         effective_date=ex.parse_effective_date(text),
@@ -165,29 +170,9 @@ def _resolve_api_url(api_tpl: str, article: Article) -> str | None:
     """
     fields = _template_fields(article)
     try:
-        filled = api_tpl.format_map(_SafeFields(fields))
-    except Exception:  # noqa: BLE001
+        return api_tpl.format_map(fields)
+    except (KeyError, ValueError):
         return None
-    if "{" not in filled:
-        return filled
-
-    ids: list[str] = []
-    got = _extract_id(article.url)
-    if got:
-        ids.append(got[1])
-    ids += re.findall(r"(\d{3,})", article.url)
-    ids += re.findall(r"([0-9a-f]{8,})", article.url.lower())
-    for candidate in ids:
-        probe_fields = dict(fields)
-        for name in re.findall(r"\{(\w+)\}", api_tpl):
-            probe_fields.setdefault(name, candidate)
-        try:
-            resolved = api_tpl.format_map(_SafeFields(probe_fields))
-        except Exception:  # noqa: BLE001
-            continue
-        if "{" not in resolved:
-            return resolved
-    return None
 
 
 # ------------------------------------------------------------------ 各级实现
@@ -313,12 +298,13 @@ def _tier_html(source: Source, article: Article, fetcher: Fetcher) -> FetchOutco
         return None
     ex.strip_noise(tree)
     text, how = ex.extract_body(tree, source.detail.content_selectors, source.min_body_chars)
-    return postprocess(
+    outcome = postprocess(
         source, article, text,
         method=f"html:{how}",
         html_for_status=html,
         title=ex.extract_title(tree),
     )
+    return outcome
 
 
 def _tier_pdf(source: Source, article: Article, fetcher: Fetcher) -> FetchOutcome | None:
@@ -364,7 +350,11 @@ def _tier_pdf(source: Source, article: Article, fetcher: Fetcher) -> FetchOutcom
     if method.startswith("failed") or not raw_text.strip():
         return _blocked("pdf:failed", f"PDF 解析失败（{method}）")
     text = ex.normalize_text(pdfx.normalize_pdf_text(raw_text))
-    return postprocess(source, article, text, method=f"pdf:{method}")
+    outcome = postprocess(source, article, text, method=f"pdf:{method}")
+    if method == "pypdf:partial" and outcome.status == FetchStatus.FULL.value:
+        outcome.status = FetchStatus.PARTIAL.value
+        outcome.reason = "PDF 含未识别扫描页或文字层不完整，须补充 OCR 并复核"
+    return outcome
 
 
 def _tier_render(source: Source, article: Article, fetcher: Fetcher) -> FetchOutcome | None:
@@ -377,6 +367,8 @@ def _tier_render(source: Source, article: Article, fetcher: Fetcher) -> FetchOut
         return None
     try:
         proc = subprocess.run([cmd, article.url], capture_output=True, timeout=90, check=False)
+        if proc.returncode != 0:
+            return _blocked("render", f"渲染器退出码 {proc.returncode}")
         html = (proc.stdout or b"").decode("utf-8", errors="replace")
     except Exception as exc:  # noqa: BLE001
         return _blocked("render", f"渲染器执行失败: {exc}")
@@ -405,11 +397,12 @@ _TIERS = {
 # ------------------------------------------------------------------ 对外接口
 def fetch_article(source: Source, article: Article, fetcher: Fetcher) -> Article:
     """按回落链抓一条正文，就地升级 article 的字段与状态。"""
+    attempt_start = len(fetcher.attempts)
     if source.detail.mode == "blocked":
         article.fetch_status = FetchStatus.BLOCKED.value
         article.fetch_method = "blocked"
         article.notes = source.detail.blocked_reason or "信源声明为不可自动获取"
-        article.attempts = [a.to_dict() for a in fetcher.attempts]
+        article.attempts = []
         return article
 
     best: FetchOutcome | None = None
@@ -432,11 +425,12 @@ def fetch_article(source: Source, article: Article, fetcher: Fetcher) -> Article
         if outcome.status == FetchStatus.BLOCKED.value:
             best = best or outcome
             continue
-        if outcome.status in (FetchStatus.FULL.value, FetchStatus.PARTIAL.value,
-                              FetchStatus.SCANNED_PDF.value):
+        if outcome.status == FetchStatus.FULL.value:
             best = outcome
             break
-        best = best or outcome
+        rank = {"partial": 3, "scanned_pdf": 2, "listing_only": 1, "blocked": 0}
+        if best is None or rank.get(outcome.status, 0) > rank.get(best.status, 0):
+            best = outcome
 
     if best is None:
         article.fetch_status = FetchStatus.BLOCKED.value
@@ -453,5 +447,5 @@ def fetch_article(source: Source, article: Article, fetcher: Fetcher) -> Article
         article.effective_date = best.effective_date or article.effective_date
         if best.reason and article.fetch_status != FetchStatus.FULL.value:
             article.notes = best.reason
-    article.attempts = [a.to_dict() for a in fetcher.attempts]
+    article.attempts = [a.to_dict() for a in fetcher.attempts[attempt_start:]]
     return article

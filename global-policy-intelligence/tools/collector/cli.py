@@ -2,7 +2,7 @@
 """collector · 命令行入口
 
     python -m collector collect --sources nfra_dongtai --max-fetch 8
-    python -m collector verify 报告.md --evidence evidence
+    python -m collector verify 报告.md --claims claims.json --evidence evidence
     python -m collector doctor          # 检查环境与依赖能力
 
 设计原则：**默认安全**。不指定信源时用 sources.yaml 里 enabled: true 的，
@@ -11,9 +11,11 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import os
 import sys
+from typing import Any
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLS_DIR = os.path.dirname(HERE)
@@ -26,12 +28,11 @@ DEPS: dict[str, tuple[str, bool, str]] = {
     "httpx": ("httpx", True, "HTTP 客户端：分级抓取"),
     "lxml": ("lxml", True, "HTML/XML 解析：正文抽取"),
     "yaml": ("PyYAML", True, "读取 sources.yaml 信源注册表"),
-    "pypdf": ("pypdf", False, "可选：更完整的 PDF 正文提取"),
-    "pdfminer": ("pdfminer.six", False, "可选：PDF 正文提取备选"),
-    "cssselect": ("cssselect", False, "可选：CSS 选择器加速"),
+    "pypdf": ("pypdf", True, "PDF 文字层解析"),
+    "cssselect": ("cssselect", True, "CSS 选择器解析"),
 }
-# 实际参与自检的包（pdfminer 与 pypdf 二者其一即可，故只列主要项）
-CHECK_MODULES = ("httpx", "lxml", "yaml", "pypdf", "pdfminer", "cssselect")
+# 自检包与采集依赖共用一份能力声明。
+CHECK_MODULES = tuple(DEPS)
 
 # 能力分层：告诉用户"哪一层不能用"，而不是笼统说"依赖没装齐"。
 # 这么分是因为各层的真实依赖不同（实测过的分层，别凭印象改）：
@@ -39,11 +40,10 @@ CHECK_MODULES = ("httpx", "lxml", "yaml", "pypdf", "pdfminer", "cssselect")
 #   · 计划(dry-run)层只要 PyYAML（读配置）
 #   · 采集层要 httpx + lxml（联网 + 解析）
 CAPABILITIES: tuple[tuple[str, tuple[str, ...], str], ...] = (
-    ("幻觉校验 verify（C1–C4）", (), "零外部依赖，任何环境可用"),
+    ("幻觉校验 verify（逐项证据审计）", (), "零外部依赖，任何环境可用"),
     ("信源表与计划 dry-run", ("yaml",), "需要 PyYAML 读 sources.yaml"),
-    ("正文采集 collect", ("httpx", "lxml", "yaml"), "需要联网与 HTML/XML 解析"),
+    ("正文采集 collect", tuple(DEPS), "需要 HTTP、HTML/XML、CSS 与 PDF 解析"),
 )
-PDF_HINT = "装了 pypdf 或 pdfminer.six 可更完整提取 PDF 正文"
 
 
 def _try_import(name: str) -> bool:
@@ -67,8 +67,7 @@ def _capabilities() -> dict[str, object]:
     for name in CHECK_MODULES:
         caps[name] = _try_import(name)
     caps["render_cmd"] = os.environ.get("POLICY_INTEL_RENDER_CMD", "")
-    # 代理自检：本环境 NO_PROXY 若含 [::1] 会让 httpx 全部请求失败，已在 net.py 修复
-    caps["no_proxy_sanitized"] = True
+    caps["proxy_env_configured"] = bool(os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY"))
     return caps
 
 
@@ -125,8 +124,6 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
             print("提示：只想校验报告的话，上面这些不需要任何第三方包。")
         return 2
 
-    if not caps.get("pypdf") and not caps.get("pdfminer"):
-        print("\n[提示] " + PDF_HINT + "（未装时扫描件会被标记为 scanned_pdf）。")
     if not caps.get("render_cmd"):
         print("[提示] 未配置 POLICY_INTEL_RENDER_CMD，JS 渲染站将标记为 blocked。")
     print("\n结论：全部能力可用。")
@@ -154,6 +151,7 @@ def _print_dry_run(summary: dict[str, Any], as_json: bool) -> None:
               f" 最多 {item['declared_max_items']} 条")
     print()
     print(summary["note"])
+    print(summary["coverage"]["note"])
 
 
 def _warn_placeholder_contact(config_path: str) -> None:
@@ -217,6 +215,8 @@ def cmd_collect(args: argparse.Namespace) -> int:
             retries=args.retries,
             sleep_between=args.sleep,
             verify_tls=not args.insecure,
+            use_proxy=not args.direct,
+            direct_fallback=not args.no_direct_fallback,
         ),
     )
     report, summary = run_collect(args.config, args.evidence, opts)
@@ -242,8 +242,9 @@ def cmd_collect(args: argparse.Namespace) -> int:
             print(f"全文存档：{summary['archive_path']}")
         print(f"证据索引：{summary['ledger_path']}")
 
-    # 退出码约定：有信源失败 → 3（让 CI/定时任务能看见，而不是假装成功）
-    return 3 if summary["failures"] else 0
+    # An empty result after filtering is not proof of no policy changes.
+    unavailable = not args.listing_only and not any(a.text for a in report.articles)
+    return 3 if summary["failures"] or unavailable else 0
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
@@ -275,20 +276,24 @@ def cmd_verify(args: argparse.Namespace) -> int:
         argv.append("--json")
     if args.allow_unknown_citations:
         argv.append("--allow-unknown-citations")
+    if args.claims:
+        argv.extend(["--claims", args.claims])
+    if args.legacy_checks_only:
+        argv.append("--legacy-checks-only")
     return verify_mod.main(argv)
 
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="collector",
-        description="政策情报检索层：分级采集 + 正文回落链 + 证据存证 + 幻觉校验",
+        description="政策情报检索层：分级采集 + 正文回落链 + 存证 + 逐项证据审计",
     )
     sub = ap.add_subparsers(dest="command", required=True)
 
     c = sub.add_parser("collect", help="按信源配置采集并抓正文")
     c.add_argument("--config", default=DEFAULT_SOURCES, help="sources.yaml 路径")
     c.add_argument("--evidence", default=DEFAULT_ARCHIVE, help="证据库根目录")
-    c.add_argument("--sources", default="", help="逗号分隔的信源 key；留空=全部 enabled")
+    c.add_argument("--sources", default="", help="逗号分隔的信源 key（可显式选择停用源）；留空=已启用 L1/L2")
     c.add_argument("--since", default=None, help="窗口起点 YYYY-MM-DD")
     c.add_argument("--until", default=None, help="窗口终点 YYYY-MM-DD")
     c.add_argument("--max-fetch", type=int, default=40, help="本次最多抓多少篇正文")
@@ -299,6 +304,8 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--retries", type=int, default=2)
     c.add_argument("--sleep", type=float, default=0.8, help="同域请求间隔（秒）")
     c.add_argument("--insecure", action="store_true", help="关闭 TLS 校验（不推荐）")
+    c.add_argument("--direct", action="store_true", help="忽略全部环境代理，直接访问")
+    c.add_argument("--no-direct-fallback", action="store_true", help="环境代理失败时不转直连")
     c.add_argument("--json", action="store_true")
     c.set_defaults(func=cmd_collect)
 
@@ -307,6 +314,8 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--evidence", default=DEFAULT_ARCHIVE, help="证据库根目录")
     v.add_argument("--json", action="store_true")
     v.add_argument("--allow-unknown-citations", action="store_true")
+    v.add_argument("--claims", help="逐项结论与证据映射 JSON 路径（严格校验必需）")
+    v.add_argument("--legacy-checks-only", action="store_true", help="仅运行旧 C1-C4 检查，不代表严格验收")
     v.set_defaults(func=cmd_verify)
 
     d = sub.add_parser("doctor", help="环境与能力自检")
@@ -315,9 +324,29 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from .console import configure_output
+    configure_output()
     ap = build_parser()
     args = ap.parse_args(argv)
-    return int(args.func(args))
+    if args.command == "collect":
+        if args.max_fetch < 0 or (args.max_fetch == 0 and not args.listing_only):
+            ap.error("--max-fetch 必须大于零；仅采列表请使用 --listing-only")
+        if args.timeout <= 0 or args.retries < 0 or args.sleep < 0:
+            ap.error("timeout 必须大于零，retries 和 sleep 不得为负数")
+        for value in (args.since, args.until):
+            if value:
+                try:
+                    if dt.date.fromisoformat(value).isoformat() != value:
+                        raise ValueError(value)
+                except ValueError:
+                    ap.error("日期必须为有效的 YYYY-MM-DD")
+        if args.since and args.until and args.since > args.until:
+            ap.error("--since 不得晚于 --until")
+    try:
+        return int(args.func(args))
+    except (OSError, ValueError, TypeError) as exc:
+        print(f"输入或存证失败：{exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

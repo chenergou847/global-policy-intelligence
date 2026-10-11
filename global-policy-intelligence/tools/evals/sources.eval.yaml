@@ -64,10 +64,10 @@ sources:
       pages: 1
     extract:
       records_path: null
-      link_pattern: "/static/detail_pdf\\.html"
+      link_pattern: "/static/rule\\.pdf"
       html:
         item_selector: "div.detail_content a"
-        link_pattern: "/static/detail_pdf\\.html"
+        link_pattern: "/static/rule\\.pdf"
     detail:
       mode: pdf
       pdf_selectors: ["//a[contains(@href,'.pdf')]"]

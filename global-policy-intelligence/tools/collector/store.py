@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import ntpath
 import os
 import re
+import tempfile
 import unicodedata
+import uuid
 from typing import Any, Iterable
 
 from .models import Article, FetchStatus
@@ -53,7 +56,15 @@ def snapshot_article(article: Article, root: str) -> str:
     abs_dir = os.path.join(root, rel_dir)
     os.makedirs(abs_dir, exist_ok=True)
 
-    name = f"{article.snapshot_id}.json"
+    # Retrieval status and document metadata can change even when the body does
+    # not. Keep those versions distinct without changing the content fingerprint.
+    metadata = {key: getattr(article, key) for key in (
+        "title", "date", "effective_date", "issuer", "docno", "policy_status",
+        "fetch_status", "fetch_method", "evidence_layer", "notes",
+    )}
+    version = hashlib.sha256(json.dumps(metadata, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:12]
+    # Every acquisition is immutable, including partial -> full -> partial.
+    name = f"{article.snapshot_id}_{version}_{uuid.uuid4().hex}.json"
     rel_path = os.path.join(rel_dir, name)
     abs_path = os.path.join(root, rel_path)
 
@@ -64,31 +75,58 @@ def snapshot_article(article: Article, root: str) -> str:
             "snapshot_id": article.snapshot_id,
             "head_fingerprint": head,
             "tail_fingerprint": tail,
-            "archived_at": article.first_seen,
+            "archived_at": article.fetched_at or article.first_seen,
         }
     )
-    with open(abs_path, "w", encoding="utf-8") as f:
+    with open(abs_path, "x", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=1)
     return rel_path.replace("\\", "/")
 
 
 # ------------------------------------------------------------------ 索引
+def _validate_index(index: Any) -> dict[str, Any]:
+    if not isinstance(index, dict) or not isinstance(index.get("entries"), dict):
+        raise ValueError("Invalid evidence index: expected an object with an entries object")
+    if any(not isinstance(row, dict) for row in index["entries"].values()):
+        raise ValueError("Invalid evidence index: each entry must be an object")
+    return index
+
+
 def load_index(root: str) -> dict[str, Any]:
     path = os.path.join(root, INDEX_NAME)
-    if os.path.exists(path):
+    try:
         with open(path, encoding="utf-8") as f:
-            try:
-                return json.load(f)
-            except json.JSONDecodeError:
-                return {"entries": {}}
-    return {"entries": {}}
+            index = json.load(f)
+    except FileNotFoundError:
+        return {"entries": {}}
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError(f"Invalid evidence index at {path}: {exc}") from exc
+    return _validate_index(index)
 
 
 def save_index(root: str, index: dict[str, Any]) -> str:
+    _validate_index(index)
+    # Never replace a damaged historical index with a fresh collection.
+    load_index(root)
     os.makedirs(root, exist_ok=True)
     path = os.path.join(root, INDEX_NAME)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(index, f, ensure_ascii=False, indent=1)
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=root,
+            prefix=f".{INDEX_NAME}.", suffix=".tmp", delete=False,
+        ) as f:
+            temp_path = f.name
+            json.dump(index, f, ensure_ascii=False, indent=1)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except FileNotFoundError:
+                pass
     return path
 
 
@@ -98,9 +136,9 @@ def index_entry(article: Article, snapshot_path: str) -> dict[str, Any]:
         {
             "snapshot_path": snapshot_path,
             "snapshot_id": article.snapshot_id,
-            "content_hash": content_hash(article.text),
+            "content_hash": content_hash(article.text) if fold_for_match(article.text) else "",
             "title_key": title_key(article.title),
-            "fetched_at": article.first_seen,
+            "fetched_at": article.fetched_at or article.first_seen,
         }
     )
     return row
@@ -113,14 +151,35 @@ def dedupe(articles: Iterable[Article]) -> tuple[list[Article], list[dict[str, A
     三级判定：
       ① URL 完全相同
       ② 正文内容哈希相同（跨站转载同一条政策）
-      ③ 归一化标题相同 + 同月（防止同一文件的多语/多版重复计数）
+      ③ 同一明确文号 + 发布机关
     保留优先级：正文更完整 > 权威层级更高（L1 > L2）> 先到者
     """
-    kept: dict[str, Article] = {}
+    kept: dict[int, Article] = {}
     dupes: list[dict[str, Any]] = []
-    by_url: dict[str, str] = {}
-    by_text: dict[str, str] = {}
-    by_title: dict[str, str] = {}
+    dupe_groups: list[int] = []
+    by_url: dict[str, int] = {}
+    by_text: dict[str, int] = {}
+    by_doc: dict[tuple[str, str], int] = {}
+    parents: dict[int, int] = {}
+    arrival: dict[int, int] = {}
+
+    unknown = {
+        "", "无", "无文号", "未标明", "无/未标明", "未确认", "未知",
+        "不适用", "未提供", "待确认", "none", "null", "unknown", "n/a", "na", "-", "--",
+    }
+
+    def document_key(a: Article) -> tuple[str, str] | None:
+        docno = fold_for_match(a.docno).casefold()
+        issuer = fold_for_match(a.issuer).casefold()
+        if docno in unknown or issuer in unknown:
+            return None
+        return docno, issuer
+
+    def group_for(key: int) -> int:
+        while parents[key] != key:
+            parents[key] = parents[parents[key]]
+            key = parents[key]
+        return key
 
     layer_rank = {"L1": 0, "L2": 1}
 
@@ -130,49 +189,65 @@ def dedupe(articles: Iterable[Article]) -> tuple[list[Article], list[dict[str, A
             layer_rank.get(a.evidence_layer, 9),
         )
 
-    for art in articles:
-        ck = content_hash(art.text) if art.text else ""
-        tk = f"{title_key(art.title)}|{(art.date or '')[:7]}"
+    for position, art in enumerate(articles):
+        ck = content_hash(art.text) if fold_for_match(art.text) else ""
+        dk = document_key(art)
+        matches: dict[int, str] = {}
+        for alias, lookup, reason in (
+            (art.url, by_url, "URL 相同"),
+            (ck, by_text, "正文内容哈希相同（跨站转载）"),
+            (dk, by_doc, "明确文号与发布机关相同"),
+        ):
+            if alias and alias in lookup:
+                matches.setdefault(group_for(lookup[alias]), reason)
 
-        existing_key: str | None = None
-        reason = ""
-        if art.url in by_url:
-            existing_key, reason = by_url[art.url], "URL 相同"
-        elif ck and ck in by_text:
-            existing_key, reason = by_text[ck], "正文内容哈希相同（跨站转载）"
-        elif tk.strip("|") and tk in by_title:
-            existing_key, reason = by_title[tk], "标题指纹与月份相同"
-
-        if existing_key is None:
-            key = art.url or art.snapshot_id
+        if not matches:
+            key = position
+            parents[key] = key
             kept[key] = art
-            if art.url:
-                by_url[art.url] = key
-            if ck:
-                by_text[ck] = key
-            if tk.strip("|"):
-                by_title[tk] = key
-            continue
-
-        current = kept.get(existing_key)
-        if current is not None and score(art) < score(current):
-            # 新条目更完整/更权威 → 替换，旧条目降为重复
-            kept[existing_key] = art
-            dupes.append(
-                {
-                    "dropped_url": current.url,
-                    "kept_url": art.url,
-                    "reason": f"{reason}；保留更完整/更权威的一条",
-                }
-            )
+            arrival[key] = position
         else:
-            dupes.append(
-                {
+            key = min(matches)
+            best_key = min(matches, key=lambda k: (score(kept[k]), arrival[k]))
+            current = kept[best_key]
+            replace = score(art) < score(current)
+            winner = art if replace else current
+            winner_arrival = position if replace else arrival[best_key]
+
+            for matched_key, reason in matches.items():
+                if replace or matched_key != best_key:
+                    dupes.append({
+                        "dropped_url": kept[matched_key].url,
+                        "kept_url": winner.url,
+                        "reason": f"{reason}；保留更完整/更权威的一条",
+                    })
+                    dupe_groups.append(key)
+            if not replace:
+                dupes.append({
                     "dropped_url": art.url,
-                    "kept_url": current.url if current else existing_key,
-                    "reason": reason,
-                }
-            )
+                    "kept_url": winner.url,
+                    "reason": matches[best_key],
+                })
+                dupe_groups.append(key)
+
+            # A new article can join several groups through different aliases.
+            # Redirect all old aliases and duplicate reports to the final winner.
+            for matched_key in matches:
+                if matched_key != key:
+                    parents[matched_key] = key
+                    del kept[matched_key]
+                    del arrival[matched_key]
+            kept[key] = winner
+            arrival[key] = winner_arrival
+
+        for alias, lookup in (
+            (art.url, by_url), (ck, by_text), (dk, by_doc),
+        ):
+            if alias:
+                lookup[alias] = key
+
+    for row, key in zip(dupes, dupe_groups):
+        row["kept_url"] = kept[group_for(key)].url
     return list(kept.values()), dupes
 
 
@@ -214,13 +289,28 @@ def load_snapshot(root: str, snapshot_path: str) -> dict[str, Any] | None:
     # 打开目录会抛 FileNotFoundError / IsADirectoryError（实测踩到）。
     if not snapshot_path:
         return None
-    abs_path = os.path.join(root, snapshot_path)
+    if not isinstance(snapshot_path, str):
+        return None
+    # Check Windows path syntax even when evidence is read on another platform.
+    if os.path.isabs(snapshot_path) or ntpath.isabs(snapshot_path) or ntpath.splitdrive(snapshot_path)[0]:
+        return None
+    relative = snapshot_path.replace("\\", "/")
+    if ".." in relative.split("/"):
+        return None
+    abs_root = os.path.realpath(root)
+    abs_path = os.path.realpath(os.path.join(abs_root, relative))
+    try:
+        if os.path.normcase(os.path.commonpath([abs_root, abs_path])) != os.path.normcase(abs_root):
+            return None
+    except ValueError:
+        return None
     if not os.path.isfile(abs_path):
         return None
     with open(abs_path, encoding="utf-8") as f:
         try:
-            return json.load(f)
-        except json.JSONDecodeError:
+            snapshot = json.load(f)
+            return snapshot if isinstance(snapshot, dict) else None
+        except (json.JSONDecodeError, UnicodeDecodeError):
             return None
 
 

@@ -17,7 +17,7 @@
 #   extract.html.*          HTML 列表：item_selector / link_pattern / date_from_url
 #   detail.mode             json_api | html | pdf | render | blocked
 #   detail.api_url          正文接口模板，用 {docId} 等占位
-#   detail.content_selectors 正文容器选择器（按优先级，支持内置 CSS→XPath 转换）
+#   detail.content_selectors 正文容器选择器（按优先级，使用 cssselect）
 #   detail.tiers            正文回落链顺序，默认 [api, html, pdf]
 #
 # 采集纪律
@@ -27,14 +27,13 @@
 # =============================================================================
 
 meta:
-  version: 2
-  updated_at: "2026-10-07"
+  version: 3
+  updated_at: "2026-10-11"
+  coverage_note: "示例适配器以保险/金融议题为主；默认仅美国与英国官方源，不代表全球/行业完整覆盖。按实际法域扩展或使用网页工具。"
   contact_ua: "policy-intel-collector/1.0 (+contact: 请在此填写你的邮箱，便于站点管理员联系)"
   proxy_policy: |
-    实测：本机环境代理在部分境内政府站上 TLS 握手失败（SSL: UNEXPECTED_EOF_WHILE_READING），
-    而直连正常；境外站（Federal Register / legislation.gov.uk）代理与直连均可用。
-    因此 net.py 会：① 清理 NO_PROXY 中畸形的 [::1]；② 把官方信源域名加入直连名单；
-    ③ 代理失败时自动改直连重试。切勿简单"全局关代理"或"全局走代理"。
+    由 HTTPX 按 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY 路由；仅本机默认直连。
+    网络错误可转直连；用 --no-direct-fallback 禁用，用 --direct 忽略环境代理。
   compliance: |
     仅采集公开信息；保留原文链接与快照以便核验；不采集、不使用任何内部资料；
     不绕过验证码/登录墙/付费墙。对外发布前必须人工核校。
@@ -363,7 +362,7 @@ sources:
     region: 境外
     layer: L3
     probe: verified
-    enabled: true
+    enabled: false         # L3 行业线索，必须按议题显式 --sources artemis
     type: rss
     listing:
       url: "https://www.artemis.bm/feed/"

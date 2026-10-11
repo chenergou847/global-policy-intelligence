@@ -26,8 +26,9 @@ def build_dry_run_plan(
 ) -> dict[str, Any]:
     """生成 dry-run 计划：只读配置，不发任何请求。"""
     registry = load_registry(registry_path)
-    wanted = [s for s in sources or [] if s]
-    selected = [s for s in registry.enabled if not wanted or s.key in wanted]
+    if max_fetch < 0:
+        raise ValueError("max_fetch 不得为负数")
+    selected = registry.select(sources)
 
     plan: list[dict[str, Any]] = []
     for source in selected:
@@ -36,6 +37,8 @@ def build_dry_run_plan(
             "key": source.key,
             "name": source.name,
             "probe": source.probe,
+            "layer": source.layer,
+            "enabled": source.enabled,
             "type": source.type,
             "listing_requests": urls,
             "detail_mode": source.detail.mode,
@@ -52,6 +55,12 @@ def build_dry_run_plan(
         "note": ("未发送任何请求。确认无误后去掉 --dry-run 再执行；"
                  "并建议先去掉 sources.yaml 中 meta.contact_ua 的占位邮箱。"),
         "sources_selected": len(plan),
+        "coverage": {
+            "regions": sorted({s.region for s in selected}),
+            "layers": sorted({s.layer for s in selected}),
+            "scope_complete": False,
+            "note": "注册表是有限适配器集合；必须按任务法域补充官方检索，不能视为全球覆盖。",
+        },
         "listing_requests_would_send": sum(len(p["listing_requests"]) for p in plan),
         "detail_fetch_budget": 0 if listing_only else max_fetch,
         "plan": plan,

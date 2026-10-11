@@ -64,6 +64,7 @@ class Article:
     fetch_method: str = ""                  # api / text / feed / html / pdf / render
     attempts: list[dict[str, Any]] = field(default_factory=list)
     first_seen: str = ""
+    fetched_at: str = ""                   # 本次获取时间，不等于首次发现日期
     evidence_layer: str = "L1"              # L1 原始权威 / L2 官方解释
     notes: str = ""
     # 列表记录的原始字段（用于正文接口模板渲染）。

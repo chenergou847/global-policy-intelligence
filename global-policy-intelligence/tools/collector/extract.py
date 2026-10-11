@@ -13,9 +13,12 @@
 from __future__ import annotations
 
 import re
+import datetime as dt
+from functools import lru_cache
 from typing import Iterable
 
 import lxml.html as LH
+from cssselect import HTMLTranslator
 
 from .models import FetchStatus
 
@@ -114,54 +117,23 @@ def looks_like_nav_page(text: str, min_chars: int = 200) -> bool:
 
 # ------------------------------------------------------------------ 基础工具
 # ------------------------------------------------------------------ 选择器
-# 本环境没有 cssselect（lxml 的 cssselect 依赖它），因此实现一个最小 CSS→XPath
-# 转换器，只覆盖信源配置里真实会用到的选择器形态。完全外部依赖为零。
-_CSS_TOKEN = re.compile(
-    r"^(?P<tag>[a-zA-Z][\w-]*)?"
-    r"(?P<id>#[\w-]+)?"
-    r"(?P<cls>(?:\.[\w-]+)*)$"
-)
-
-
+@lru_cache(maxsize=256)
 def css_to_xpath(selector: str) -> str | None:
-    """把 `div.view TRS_Editor` / `div#zoom` / `article` 这类选择器转成 XPath。"""
+    """使用 cssselect 的标准 HTML 语义；无效配置必须显式失败。"""
     selector = (selector or "").strip()
     if not selector:
         return None
-    parts: list[str] = []
-    for chunk in selector.split():
-        if chunk in (">", "+", "~") or "[" in chunk or ":" in chunk:
-            return None  # 形态过于复杂，交给启发式兜底
-        m = _CSS_TOKEN.match(chunk)
-        if not m:
-            return None
-        preds: list[str] = []
-        tag = m.group("tag") or "*"
-        if m.group("id"):
-            preds.append(f"@id='{m.group('id')[1:]}'")
-        for cls in [c for c in (m.group("cls") or "").split(".") if c]:
-            preds.append(
-                f"contains(concat(' ', normalize-space(@class), ' '), ' {cls} ')"
-            )
-        parts.append(tag + ("[" + " and ".join(preds) + "]" if preds else ""))
-    return "//" + "/".join(parts)
+    return HTMLTranslator().css_to_xpath(selector)
 
 
 def select_nodes(tree: LH.HtmlElement, selector: str) -> list[LH.HtmlElement]:
-    """选择节点：优先 cssselect（若装了 cssselect），否则走内置转换。"""
+    """在当前子树内选择节点，缓存编译结果。"""
     if not selector or not selector.strip():
         return []
-    try:
-        return list(tree.cssselect(selector))
-    except Exception:  # noqa: BLE001  ImportError / SelectorSyntaxError 都走兜底
-        pass
     xp = css_to_xpath(selector)
     if not xp:
         return []
-    try:
-        return list(tree.xpath(xp))
-    except Exception:  # noqa: BLE001
-        return []
+    return list(tree.xpath(xp))
 
 
 # lxml 的硬坑：若传入**含编码声明**的 unicode 字符串，fromstring 会抛
@@ -311,9 +283,12 @@ def _mk(y: str | int, m: str | int, d: str | int) -> str | None:
         yi, mi, di = int(y), int(m), int(d)
     except (TypeError, ValueError):
         return None
-    if not (2000 <= yi <= 2100 and 1 <= mi <= 12 and 1 <= di <= 31):
+    if not 2000 <= yi <= 2100:
         return None
-    return f"{yi:04d}-{mi:02d}-{di:02d}"
+    try:
+        return dt.date(yi, mi, di).isoformat()
+    except ValueError:
+        return None
 
 
 def parse_any_date(text: str, window: int = 2000) -> str | None:
@@ -344,6 +319,20 @@ def parse_any_date(text: str, window: int = 2000) -> str | None:
         got = _mk(m.group(3), _MONTHS[m.group(1).lower().rstrip(".")], m.group(2))
         if got:
             return got
+    return None
+
+
+def parse_publication_date(text: str) -> str | None:
+    """Only publication labels or a standalone signature date identify publication."""
+    labelled = re.search(
+        r"(?:发布时间|发布日期|发布于|published|posted)[^\d]{0,12}"
+        r"(20\d{2})\s*[-年/.]\s*(\d{1,2})\s*[-月/.]\s*(\d{1,2})", text, re.I,
+    )
+    if labelled:
+        return _mk(*labelled.groups())
+    for line in reversed(text.splitlines()):
+        if re.fullmatch(r"\s*20\d{2}\s*[年/.-]\s*\d{1,2}\s*[月/.-]\s*\d{1,2}\s*日?\s*", line):
+            return parse_any_date(line)
     return None
 
 

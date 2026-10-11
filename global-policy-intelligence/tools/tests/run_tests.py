@@ -262,7 +262,7 @@ def _make_text_pdf(text: str) -> bytes:
     return bytes(out)
 
 
-@test("T12 PDF 文字提取（内置标准库解析器）")
+@test("T12 PDF 文字提取（pypdf）")
 def t12() -> None:
     long_text = (
         "Reinsurance collateral requirements are amended by this regulation. "
@@ -273,14 +273,14 @@ def t12() -> None:
     check("T12 识别为 PDF", pdfx.is_pdf(data), "is_pdf false")
     text, method = pdfx.extract_pdf_text(data)
     check("T12 提取到文字", "collateral" in text.lower(), f"method={method} text={text[:80]!r}")
-    check("T12 方法可追溯", method in ("stdlib", "pypdf", "pdfminer"), method)
+    check("T12 方法可追溯", method == "pypdf", method)
 
 
-@test("T13 扫描件（无文字层）→ scanned_pdf，不假装成功")
+@test("T13 损坏 PDF 不得误判为扫描件")
 def t13() -> None:
     fake = b"%PDF-1.4\n1 0 obj\n<< /Type /XObject /Subtype /Image /Width 100 >>\nendobj\n%%EOF\n"
     text, method = pdfx.extract_pdf_text(fake)
-    check("T13 判定 scanned", method == "scanned", f"method={method}")
+    check("T13 损坏文件判定 failed", method.startswith("failed"), f"method={method}")
     check("T13 正文为空", not text.strip(), repr(text[:40]))
 
 
@@ -297,10 +297,11 @@ def t15() -> None:
     body = "上海市推进国际再保险中心建设行动方案。到2028年，跨境再保险业务规模力争达到500亿元。"
     a = Article(url="https://a.example/policy/1", source="A站", title="上海推进国际再保险中心建设行动方案",
                 date="2026-09-15", text=body, fetch_status=FetchStatus.LISTING_ONLY.value,
-                evidence_layer="L2")
+                evidence_layer="L2", docno="沪府办发〔2026〕18号", issuer="上海市人民政府办公厅")
     b = Article(url="https://b.example/news/2", source="B站", title="上海推进国际再保险中心建设行动方案",
                 date="2026-09-15", text=body + "补充：支持银行办理结售汇业务。" * 3,
-                fetch_status=FetchStatus.FULL.value, evidence_layer="L1")
+                fetch_status=FetchStatus.FULL.value, evidence_layer="L1",
+                docno="沪府办发〔2026〕18号", issuer="上海市人民政府办公厅")
     kept, dupes = store.dedupe([a, b])
     check("T15 只留一条", len(kept) == 1, f"got {len(kept)}")
     check("T15 保留更完整的一条", kept[0].url == b.url, kept[0].url)
@@ -313,8 +314,8 @@ def t16() -> None:
     b = Article(url="https://x.example/1", source="X", title="关于跨境数据流动便利化的若干措施", date="2026-09-10")
     c = Article(url="https://y.example/9", source="Y", title="关于跨境数据流动便利化的若干措施！", date="2026-09-11")
     kept, dupes = store.dedupe([a, b, c])
-    check("T16 三条归一为一条", len(kept) == 1, f"got {len(kept)}")
-    check("T16 重复记录=2", len(dupes) == 2, str(len(dupes)))
+    check("T16 同标题不同 URL 不能直接归一", len(kept) == 2, f"got {len(kept)}")
+    check("T16 仅同 URL 记录重复", len(dupes) == 1, str(len(dupes)))
 
 
 # ------------------------------------------------------------------ 幻觉校验
@@ -684,7 +685,7 @@ def t32() -> None:
 
     check("T32 不因缺包而拒绝运行", "缺少必需的第三方依赖" not in out, out[:300])
     check("T32 没有 traceback", "Traceback" not in out, out[:300])
-    check("T32 真的执行了校验", "幻觉校验" in out, out[:300])
+    check("T32 真的执行了校验", "证据校验" in out, out[:300])
     check("T32 报出未收录引用", "C1-引用链接" in out, out[:300])
     # 空证据库必然不通过，这是校验结论而非依赖故障
     check("T32 退出码=2（校验结论）", r.returncode == 2, f"exit={r.returncode}")

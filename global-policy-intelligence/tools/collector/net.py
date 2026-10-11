@@ -3,13 +3,8 @@
 
 职责：提供一个「永远能拿到东西或明确报错」的 HTTP 客户端。
 
-设计要点（踩过的坑，务必保留）：
-  1. 本机环境的 NO_PROXY 里含 `[::1]` 这种写法，httpx 解析时会抛
-     `InvalidURL: Invalid port: ':1]'`，导致**所有**请求失败。
-     这里在导入时就把它清掉，让 HTTP(S)_PROXY 正常生效。
-  2. 单例连接池 + 统一超时 + 统一 UA；每次请求都记录 attempt，供证据台账审计。
-  3. 默认 verify=True。只有显式配置 allow_insecure_tls 的信源才关闭校验
-     （部分政府站点证书链不完整），绝不作为全局默认。
+设计要点：HTTPX 管理连接池与环境代理路由；显式直连不信任环境代理。
+请求记录 attempts，读取解码后的响应时执行大小上限。默认校验 TLS。
 """
 from __future__ import annotations
 
@@ -19,16 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
-# ---------------------------------------------------------------- proxy 修复
-# 必须在 import httpx 之前清理，否则 httpx 会在首次请求时抛 InvalidURL。
-for _bad in ("NO_PROXY", "no_proxy"):
-    _val = os.environ.get(_bad, "")
-    if "[::" in _val or "::1]" in _val:
-        os.environ[_bad] = ",".join(
-            part for part in _val.split(",") if not part.strip().startswith("[")
-        )
-
-import httpx  # noqa: E402
+import httpx
 
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -38,28 +24,12 @@ DEFAULT_UA = (
 
 # ---------------------------------------------------------------- 代理分流
 DEFAULT_BYPASS_SUFFIXES = (
-    "gov.cn",
-    "npc.gov.cn",
-    "org.cn",
-    "gov.hk",
-    "gov.sg",
-    "mas.gov.sg",
-    "legislation.gov.uk",
-    "europa.eu",
-    "iaisweb.org",
-    "artemis.bm",
+    "localhost", "127.0.0.1", "::1",
 )
 
 
 def prepare_proxy_env(extra_bypass: tuple[str, ...] = ()) -> dict[str, str]:
-    """修好 NO_PROXY，并把重要的官方站点加入直连名单。
-
-    实测结论（很重要）：
-      · 本机代理在部分境内政府站上会握手失败（SSL: UNEXPECTED_EOF_WHILE_READING），
-        而**直连完全正常**；对境外站（Federal Register）则代理与直连都可用。
-      · 所以正确策略不是「关掉代理」，也不是「全部走代理」，而是**按域名分流**。
-    这里把官方信源域名写进 NO_PROXY，让境外走代理、境内走直连。
-    """
+    """修好 NO_PROXY；默认只绕过本机，不替用户推断政府站点路由。"""
     current = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
     parts = [p.strip() for p in current.split(",") if p.strip() and not p.strip().startswith("[")]
     for suffix in tuple(DEFAULT_BYPASS_SUFFIXES) + tuple(extra_bypass):
@@ -77,6 +47,8 @@ def proxy_detected() -> str:
         or os.environ.get("https_proxy")
         or os.environ.get("HTTP_PROXY")
         or os.environ.get("http_proxy")
+        or os.environ.get("ALL_PROXY")
+        or os.environ.get("all_proxy")
         or ""
     )
 
@@ -92,6 +64,7 @@ class Attempt:
     chars: int = 0
     error: str | None = None
     elapsed_ms: int = 0
+    request_id: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -102,6 +75,7 @@ class Attempt:
             "chars": self.chars,
             "error": self.error,
             "elapsed_ms": self.elapsed_ms,
+            "request_id": self.request_id,
         }
 
 
@@ -126,16 +100,21 @@ class Fetcher:
         self.config = config or NetConfig()
         self.transport_notes: list[str] = []
         self._doc_cache: dict[str, tuple[str, str]] = {}
+        if self.config.use_proxy:
+            prepare_proxy_env()
         self._client = self._build_client(use_proxy=self.config.use_proxy)
         self._direct_client: httpx.Client | None = (
-            self._build_client(use_proxy=False) if self.config.direct_fallback else None
+            self._build_client(use_proxy=False)
+            if self.config.direct_fallback and self.config.use_proxy and proxy_detected() else None
         )
         self.attempts: list[Attempt] = []
+        self._request_seq = 0
 
     def _build_client(self, *, use_proxy: bool) -> httpx.Client:
-        proxy = proxy_detected() if use_proxy else None
         return httpx.Client(
-            proxy=proxy,
+            # HTTPX handles per-scheme proxies and NO_PROXY. An explicit proxy
+            # would override that routing; direct clients must ignore the environment.
+            trust_env=use_proxy,
             timeout=httpx.Timeout(self.config.timeout),
             follow_redirects=True,
             verify=self.config.verify_tls,
@@ -168,21 +147,44 @@ class Fetcher:
     ) -> httpx.Response | None:
         """发起请求。失败不抛异常，返回 None 并把原因写进 attempts。
 
-        顺序：先按配置走代理（境外站），失败且允许回退时改直连（境内政府站实测必需）。
+    顺序：按环境路由，网络错误且允许回退时改直连。403/404/410 不回落。
         """
         clients: list[tuple[str, httpx.Client]] = [("proxy" if self.config.use_proxy else "direct", self._client)]
         if self._direct_client is not None and self.config.use_proxy:
             clients.append(("direct", self._direct_client))
 
         last_error: str | None = None
+        self._request_seq += 1
+        request_id = self._request_seq
         for route, client in clients:
             for attempt_no in range(self.config.retries + 1):
                 self._polite_wait(url)
                 started = time.monotonic()
                 try:
-                    resp = client.request(
+                    with client.stream(
                         method, url, json=json_body, headers=headers, timeout=self.config.timeout
-                    )
+                    ) as streamed:
+                        chunks: list[bytes] = []
+                        size = 0
+                        for chunk in streamed.iter_bytes():
+                            size += len(chunk)
+                            if size > self.config.max_bytes:
+                                self.attempts.append(Attempt(
+                                    url=url, tier=f"{tier}:{route}", status=streamed.status_code,
+                                    ok=False, chars=size, error="response exceeds max_bytes",
+                                    elapsed_ms=int((time.monotonic() - started) * 1000),
+                                    request_id=request_id,
+                                ))
+                                return None
+                            chunks.append(chunk)
+                        response_headers = dict(streamed.headers)
+                        # iter_bytes has already decoded HTTP content encodings.
+                        response_headers.pop("content-encoding", None)
+                        response_headers.pop("content-length", None)
+                        resp = httpx.Response(
+                            streamed.status_code, content=b"".join(chunks),
+                            headers=response_headers, request=streamed.request,
+                        )
                     elapsed = int((time.monotonic() - started) * 1000)
                     body_len = len(resp.content)
                     ok = resp.status_code == 200 and body_len > 0
@@ -194,12 +196,11 @@ class Fetcher:
                             ok=ok,
                             chars=body_len,
                             elapsed_ms=elapsed,
+                            request_id=request_id,
                             error=None if ok else f"HTTP {resp.status_code}, {body_len} bytes",
                         )
                     )
                     if resp.status_code == 200:
-                        if body_len > self.config.max_bytes:
-                            self.attempts[-1].error = "response too large, truncated"
                         if route == "direct" and self.config.use_proxy:
                             self.transport_notes.append(f"代理失败后直连成功: {url}")
                         return resp
@@ -211,7 +212,7 @@ class Fetcher:
                     last_error = f"{type(exc).__name__}: {exc}"
                     self.attempts.append(
                         Attempt(url=url, tier=f"{tier}:{route}", ok=False,
-                                error=last_error[:300], elapsed_ms=elapsed)
+                                error=last_error[:300], elapsed_ms=elapsed, request_id=request_id)
                     )
                 if attempt_no < self.config.retries:
                     time.sleep(1.2 * (attempt_no + 1))  # 退避
@@ -273,7 +274,7 @@ class Fetcher:
             return resp.json()
         except Exception as exc:  # noqa: BLE001
             self.attempts.append(
-                Attempt(url=url, tier=tier, status=resp.status_code, error=f"JSON 解析失败: {exc}")
+                Attempt(url=url, tier=tier, status=resp.status_code, error=f"JSON 解析失败: {exc}", request_id=self._request_seq)
             )
             return None
 
