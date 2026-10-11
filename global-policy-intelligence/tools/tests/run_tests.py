@@ -575,9 +575,23 @@ def t28() -> None:
     check("T28 未导入 httpx/lxml/net/fetch/store",
           not (imported & forbidden),
           f"实际导入: {sorted(imported)}")
-    check("T28 只依赖 registry 与标准库",
-          imported <= {"registry", "typing", "__future__"},
+    check("T28 只依赖 registry/pages 与标准库",
+          imported <= {"registry", "pages", "typing", "__future__"},
           f"实际导入: {sorted(imported)}")
+
+    # pages.py 也被 dry-run 间接依赖，同样必须是零外部依赖
+    pages_path = os.path.join(TOOLS, "collector", "pages.py")
+    with open(pages_path, encoding="utf-8") as f:
+        pages_tree = ast.parse(f.read())
+    pages_imported: set[str] = set()
+    for node in ast.walk(pages_tree):
+        if isinstance(node, ast.Import):
+            pages_imported.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            pages_imported.add(node.module.split(".")[0])
+    check("T28 pages.py 零外部依赖",
+          not (pages_imported & {"httpx", "lxml"}),
+          f"实际导入: {sorted(pages_imported)}")
 
     # 并且它必须真的能产出计划
     from collector import dryrun

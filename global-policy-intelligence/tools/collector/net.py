@@ -35,10 +35,6 @@ DEFAULT_UA = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
-# 该 UA 用于标识自动化采集，便于站点管理员识别与联系；
-# 政策情报场景建议在配置里声明真实联系方式（见 sources.yaml meta.contact_ua）。
-DEFAULT_CONTACT_UA = "policy-intel-collector/1.0 (+contact: set-your-email-in-sources.yaml)"
-
 
 # ---------------------------------------------------------------- 代理分流
 DEFAULT_BYPASS_SUFFIXES = (
@@ -85,40 +81,12 @@ def proxy_detected() -> str:
     )
 
 
-def probe_transport(url: str, timeout: float = 12.0) -> str:
-    """探测某个 URL 该走代理还是直连。返回 'proxy' / 'direct' / 'none'。
-
-    用途：给「代理与直连谁更可靠」提供**证据**，而不是靠猜。结果写进运行日志。
-    """
-    headers = {"User-Agent": DEFAULT_UA}
-    proxy = proxy_detected()
-
-    def _try(use_proxy: bool) -> bool:
-        try:
-            with httpx.Client(
-                proxy=proxy if use_proxy else None,
-                timeout=timeout,
-                follow_redirects=True,
-                headers=headers,
-            ) as client:
-                resp = client.get(url)
-                return resp.status_code < 500
-        except Exception:  # noqa: BLE001
-            return False
-
-    if proxy and _try(True):
-        return "proxy"
-    if _try(False):
-        return "direct"
-    return "none"
-
-
 @dataclass
 class Attempt:
     """一次抓取尝试的完整记录——用于证明「确实努力过」而不是一遇失败就判无动态。"""
 
     url: str
-    tier: str                 # api / feed / html / render / pdf / mirror
+    tier: str                 # api / text / feed / html / pdf / render
     status: int | None = None
     ok: bool = False
     chars: int = 0
@@ -342,7 +310,3 @@ def decode_body(resp: httpx.Response, encoding: str | None = None) -> str:
         except (UnicodeDecodeError, LookupError):
             continue
     return raw.decode("utf-8", errors="replace")
-
-
-def host_of(url: str) -> str:
-    return urlsplit(url).netloc.lower()

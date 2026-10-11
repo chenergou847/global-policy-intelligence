@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .pages import page_targets
 from .registry import load_registry
 
 
@@ -30,14 +31,7 @@ def build_dry_run_plan(
 
     plan: list[dict[str, Any]] = []
     for source in selected:
-        listing = source.listing
-        urls: list[str] = []
-        for page in range(1, max(1, listing.pages) + 1):
-            urls.append(
-                listing.url.replace("{page}", str(page)).replace(
-                    "{start}", str((page - 1) * max(1, listing.rows_per_page))
-                )
-            )
+        urls = [u for u, _ in page_targets(source)]   # 与真实抓取共用同一实现
         plan.append({
             "key": source.key,
             "name": source.name,

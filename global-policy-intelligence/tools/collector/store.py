@@ -13,7 +13,6 @@ import json
 import os
 import re
 import unicodedata
-from dataclasses import asdict
 from typing import Any, Iterable
 
 from .models import Article, FetchStatus
@@ -43,11 +42,6 @@ def title_key(title: str) -> str:
 
 def content_hash(text: str) -> str:
     return hashlib.sha256(fold_for_match(text).encode("utf-8")).hexdigest()[:16]
-
-
-def sha256_16(payload: str | bytes) -> str:
-    data = payload.encode("utf-8") if isinstance(payload, str) else payload
-    return hashlib.sha256(data).hexdigest()[:16]
 
 
 # ------------------------------------------------------------------ 快照
@@ -239,12 +233,3 @@ def all_snapshot_texts(root: str) -> dict[str, str]:
         if snap:
             out[url] = snap.get("text") or ""
     return out
-
-
-def row_to_article(row: dict[str, Any]) -> Article:
-    fields = {k: v for k, v in row.items() if k in Article.__dataclass_fields__}
-    return Article(**fields)  # type: ignore[arg-type]
-
-
-def article_asdict(article: Article) -> dict[str, Any]:
-    return asdict(article)

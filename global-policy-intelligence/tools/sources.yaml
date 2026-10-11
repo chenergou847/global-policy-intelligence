@@ -116,7 +116,7 @@ sources:
     detail:
       mode: html
       content_selectors: ["div#UCAP-CONTENT", "div.pages_content", "div.article", "div.detail_content"]
-      tiers: [html, render, pdf, mirror]
+      tiers: [html, render, pdf]
     max_items: 20
     notes: "国务院政策文件库的官方入口。若静态取不到正文，用渲染级；仍失败则标 blocked，不得凭标题出结论。"
 
@@ -137,7 +137,7 @@ sources:
     detail:
       mode: render
       content_selectors: ["div.detail-content", "div.law-content", "article"]
-      tiers: [render, mirror]
+      tiers: [render]
     max_items: 20
     notes: "法律与行政法规的最权威来源。静态失败属预期，务必标 blocked 而不是放弃检索。"
 
@@ -161,7 +161,7 @@ sources:
     detail:
       mode: html
       content_selectors: ["div#zoom", "div.content", "div.TRS_Editor", "div.detail_content"]
-      tiers: [html, pdf, mirror]
+      tiers: [html, pdf]
     keywords: ["跨境", "保险", "再保险", "资金", "便利化", "试点", "离岸", "跨国公司", "外债", "外汇管理"]
     max_items: 30
     notes: "跨境资金与再保险资金结算规则的原始来源。"
@@ -194,7 +194,7 @@ sources:
       mode: pdf
       pdf_field: "attrs.zwPDFUrl"
       pdf_selectors: ["//a[contains(@href,'.pdf')]"]
-      tiers: [pdf, html, mirror]
+      tiers: [pdf, html]
     keywords: ["金融", "保险", "再保险", "跨境", "临港", "国际金融中心", "自由贸易", "资本市场", "数据", "风险"]
     max_items: 20
     notes: "上海政策正文常以 PDF 附件形式发布，pdf 级是主路径而非兜底。"
@@ -218,7 +218,7 @@ sources:
     detail:
       mode: html
       content_selectors: ["div.article-content", "div.content", "div.TRS_Editor", "div.detail_content"]
-      tiers: [html, pdf, mirror]
+      tiers: [html, pdf]
     keywords: ["金融", "保险", "再保险", "跨境", "临港", "国际金融中心", "数据", "开放", "风险"]
     max_items: 20
     notes: "上海属地监管口径来源，与总局文件配合使用（注意不要混写行政层级）。"
@@ -247,7 +247,7 @@ sources:
     detail:
       mode: html
       content_selectors: ["div.content", "div.article-content", "div.TRS_Editor"]
-      tiers: [html, pdf, mirror]
+      tiers: [html, pdf]
     keywords: ["金融", "保险", "再保险", "数据", "跨境", "总部", "人才", "产业", "外汇"]
     max_items: 20
     notes: "临港新片区规范性文件；content_datetime 为毫秒时间戳，已由 collector 自动换算。"
@@ -309,7 +309,7 @@ sources:
       mode: html
       content_selectors: ["div#content", "div.legislation-body", "main", "article"]
       pdf_selectors: ["a[href$='.pdf']"]
-      tiers: [html, pdf, mirror]
+      tiers: [html, pdf]
     keywords: ["insurance", "reinsurance", "financial services", "sanctions", "data protection", "tax"]
     max_items: 30
     notes: "英国立法官方订阅源；正文页为结构化 HTML，也可取 PDF 正式文本。"
@@ -331,7 +331,7 @@ sources:
     detail:
       mode: render
       content_selectors: ["div#document1", "div.eli-container", "main"]
-      tiers: [render, mirror]
+      tiers: [render]
     max_items: 20
     human_assist: true
     notes: "若你的网络无法通过渲染层获取，明确标 blocked；不要用二手解读替代欧盟法规原文。"
@@ -354,7 +354,7 @@ sources:
     detail:
       mode: html
       content_selectors: ["div.entry-content", "article", "main"]
-      tiers: [html, pdf, mirror]
+      tiers: [html, pdf]
     max_items: 20
     notes: "保险监管国际标准（ICS、ICP）来源；sitemap 只给 URL slug 作标题占位，标题由正文页补全。"
 
@@ -376,7 +376,7 @@ sources:
     detail:
       mode: html
       content_selectors: ["div.entry-content", "article", "main"]
-      tiers: [html, mirror]
+      tiers: [html]
     max_items: 10
     notes: "L3 高可信二手：用于发现线索与市场背景，重要结论须回溯 L1/L2。"
 
@@ -400,7 +400,7 @@ sources:
     detail:
       mode: blocked
       blocked_reason: "Cloudflare JS 质询；命令行与无头浏览器均被拦截。需要人工浏览器辅助，或寻找替代官方渠道。"
-      tiers: []
+      tiers: [html, pdf]
     human_assist: true
     max_items: 0
     notes: |

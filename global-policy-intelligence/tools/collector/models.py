@@ -61,7 +61,7 @@ class Article:
     text: str = ""
     summary: str = ""
     fetch_status: str = FetchStatus.LISTING_ONLY.value
-    fetch_method: str = ""                  # api / feed / html / pdf / render / mirror
+    fetch_method: str = ""                  # api / text / feed / html / pdf / render
     attempts: list[dict[str, Any]] = field(default_factory=list)
     first_seen: str = ""
     evidence_layer: str = "L1"              # L1 原始权威 / L2 官方解释
@@ -75,13 +75,6 @@ class Article:
     @property
     def text_chars(self) -> int:
         return len(self.text or "")
-
-    @property
-    def status_enum(self) -> FetchStatus:
-        try:
-            return FetchStatus(self.fetch_status)
-        except ValueError:
-            return FetchStatus.LISTING_ONLY
 
     @property
     def snapshot_id(self) -> str:
@@ -98,9 +91,6 @@ class Article:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-
-    def to_json(self) -> str:
-        return json.dumps(self.to_dict(), ensure_ascii=False)
 
     def to_ledger_row(self) -> dict[str, Any]:
         """证据台账 19 字段行（见 references/evidence-and-sources.md）。"""

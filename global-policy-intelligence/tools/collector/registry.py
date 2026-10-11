@@ -110,16 +110,6 @@ class Registry:
     def enabled(self) -> list[Source]:
         return [s for s in self.sources if s.enabled]
 
-    def domain_allowlist(self) -> set[str]:
-        from urllib.parse import urlsplit
-
-        hosts: set[str] = set()
-        for s in self.sources:
-            for u in (s.listing.url, s.detail.api_url or ""):
-                if u and u.startswith("http"):
-                    hosts.add(urlsplit(u).netloc.lower())
-        return hosts
-
 
 # ------------------------------------------------------------------ 加载
 def _as_str_list(value: Any) -> list[str]:

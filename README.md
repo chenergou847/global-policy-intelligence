@@ -115,7 +115,7 @@ global-policy-intelligence/
 └── tools/                            # ★ 可执行采集层（依赖见上方的 requirements.txt）
     ├── sources.yaml                  # 声明式信源注册表（含 probe 实测状态）
     ├── collector/                    # 分级采集 / 正文回落链 / 存证 / 幻觉校验
-    ├── tests/                        # 85 项离线回归
+    ├── tests/                        # 86 项离线回归
     └── evals/                        # 25 项检索策略评测
 ```
 
@@ -207,7 +207,7 @@ $ python -m collector collect
 
 ```bash
 cd global-policy-intelligence/tools
-python tests/run_tests.py              # 85 项离线回归
+python tests/run_tests.py              # 86 项离线回归
 python evals/make_pdf_fixture.py       # 生成评测用 PDF fixture
 python evals/run_retrieval_evals.py    # 25 项检索策略评测（本地服务器，不联网）
 ```

@@ -22,11 +22,14 @@ import re
 import sys
 from dataclasses import dataclass, field
 from typing import Any, Iterable
+from urllib.parse import urlsplit
 
-from . import extract as ex
+# 刻意不导入 .extract：那个模块 import lxml，而本模块（幻觉校验）实际只用
+# 标准库 + .store，全部能力都不需要 HTML 解析。这里曾残留一行
+# `from . import extract as ex`（从未被调用），却让"只想校验报告"的用户
+# 也被迫装 lxml。已删除——校验器现在是零外部依赖的。
 from .models import FetchStatus
 from .store import fold_for_match
-from urllib.parse import urlsplit
 
 # ------------------------------------------------------------------ 正则
 _URL_IN_MD = re.compile(r"https?://[^\s\)\]\"'<>，。；）】]+")

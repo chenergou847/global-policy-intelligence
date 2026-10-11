@@ -311,23 +311,6 @@ def parse_sitemap(
 
 
 # ------------------------------------------------------------------ 分页参数
-def build_page_targets(source: Source) -> list[tuple[str, Any]]:
-    """按 pages 展开 (url, json_body) 列表。支持 {page} / {start} 占位。"""
-    listing = source.listing
-    targets: list[tuple[str, Any]] = []
-    for page in range(1, max(1, listing.pages) + 1):
-        url = listing.url.replace("{page}", str(page)).replace(
-            "{start}", str((page - 1) * max(1, listing.rows_per_page))
-        )
-        body = None
-        if listing.body:
-            try:
-                body = json.loads(
-                    listing.body.replace("{page}", str(page)).replace(
-                        "{start}", str((page - 1) * max(1, listing.rows_per_page))
-                    )
-                )
-            except json.JSONDecodeError:
-                body = None
-        targets.append((url, body))
-    return targets
+# 展开逻辑统一在 pages.page_targets（纯标准库），dry-run 与真实抓取共用同一实现，
+# 避免"计划里说请求 A、实际请求 B"这类不同步问题。
+from .pages import page_targets as build_page_targets  # noqa: E402  (放文件末尾以免循环导入)

@@ -223,10 +223,3 @@ def run_collect(
         "ledger_path": os.path.join(archive_root, "index.json"),
     }
     return report, summary
-
-
-def default_archive_root(collector_dir: str) -> str:
-    """默认证据库位置：<skill>/evidence"""
-    tools_dir = os.path.dirname(collector_dir)
-    skill_dir = os.path.dirname(tools_dir)
-    return os.path.join(skill_dir, "evidence")

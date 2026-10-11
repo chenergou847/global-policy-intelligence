@@ -95,5 +95,5 @@ sources:
     detail:
       mode: blocked
       blocked_reason: "评测用：模拟 Cloudflare 质询，命令行不可获取"
-      tiers: []
+      tiers: [html, pdf]
     max_items: 2

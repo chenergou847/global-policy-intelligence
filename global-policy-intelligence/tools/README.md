@@ -71,18 +71,29 @@ python -m collector verify 报告.md --evidence ../evidence
 
 ## 架构
 
+按**依赖**分层（而不是按功能），这样"只想做校验"的用户可以完全不装第三方包：
+
 ```
-collector/
-  net.py        HTTP 客户端：代理分流修复、限速、重试、内容类型判定、尝试记录
-  registry.py   sources.yaml 声明式信源注册表（含 probe 实测状态）
-  listparse.py  列表解析：JSON / HTML / RSS / Atom / sitemap
-  extract.py    正文与元数据抽取 + 完整性四态判定（防"假正文"）
-  pdfx.py       PDF 正文提取（零依赖优先；扫描件显式失败）
-  fetch.py      正文回落链：api → text → html → pdf → render → mirror → 明确失败
+零外部依赖（纯标准库）—— 幻觉校验与存证层，任何环境可直接跑
+  models.py     数据模型与四态定义
   store.py      快照 / 证据索引 / 内容级去重 / 全文存档
-  verify.py     确定性幻觉校验 C1–C4
+  verify.py     确定性幻觉校验 C1–C4（只用标准库，故意不依赖 lxml）
+  pdfx.py       PDF 正文提取（zlib 抽文本算子，扫描件显式失败）
+  pages.py      分页目标展开（dry-run 与真抓取共用同一实现）
+
+需要 lxml —— 解析层
+  extract.py    正文与元数据抽取 + 完整性四态判定（防"假正文"）
+  listparse.py  列表解析：JSON / HTML / RSS / Atom / sitemap
+
+需要 httpx —— 网络层
+  net.py        HTTP 客户端：代理分流修复、限速、重试、内容类型判定、尝试记录
+
+组合层
+  fetch.py      正文回落链：api → text → html → pdf → render → 明确失败
+  registry.py   sources.yaml 声明式信源注册表（需 PyYAML，仅 1 处 yaml.safe_load）
   run.py        采集编排
-  cli.py        命令行入口
+  dryrun.py     只读配置的计划输出（只需 PyYAML，不碰 httpx/lxml）
+  cli.py        命令行入口（依赖清单集中在 DEPS 常量，只此一处）
 ```
 
 ## 三个真实踩过的坑（都已修复并有回归测试）
@@ -124,7 +135,7 @@ set POLICY_INTEL_RENDER_CMD=my-render-cli
 ## 测试与评测
 
 ```bash
-python tests/run_tests.py              # 85 项离线回归（含上述三大坑）
+python tests/run_tests.py              # 86 项离线回归（含上述三大坑）
 python evals/make_pdf_fixture.py       # 生成评测用 PDF fixture
 python evals/run_retrieval_evals.py    # 25 项检索策略评测（本地静态服务器，不联网）
 ```

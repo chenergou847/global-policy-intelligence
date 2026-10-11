@@ -7,7 +7,7 @@
     listparse.py  列表解析（JSON / HTML / RSS / sitemap）
     extract.py    正文与元数据抽取 + 完整性四态判定
     pdfx.py       PDF 正文提取（零外部依赖优先）
-    fetch.py      正文回落链（api → html → pdf → render → mirror → 明确失败）
+    fetch.py      正文回落链（api → text → html → pdf → render → 明确失败）
     store.py      快照 / 证据索引 / 内容级去重 / 全文存档
     verify.py     确定性幻觉校验（C1–C4）
     run.py        采集编排
