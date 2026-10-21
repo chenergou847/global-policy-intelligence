@@ -6,20 +6,9 @@
 
 ## 成果样例
 
-本技能的实际输出是可直接交付管理层的分析报告。以下两份是用它跑出来的完整成品，可在线查看：
+本技能的实际输出是可直接交付管理层的分析报告。成品样例见 <https://github.com/demo-global-policy-intelligence>。
 
-| 样例 | 法域 / 议题 | 在线预览 |
-|---|---|---|
-| 沐瞳科技（Moonton）印尼政治环境与监管政策影响分析（2026-09-17） | 印尼 · 游戏与内容监管 | <https://demo-global-policy-intelligence.github.io/moonton-indonesia/> |
-| 长江存储「致态」消费级 SSD 出海韩国：政策与经营利弊评估 | 韩国 · 半导体与出口管制 | <https://demo-global-policy-intelligence.github.io/YMTC-ZHITAI-korea/> |
-
-两份样例展示的是**输出形态与深度**：分层报告结构（管理层摘要 → 范围与证据说明 → 政策动因与传导 → 专题张力 → 公司影响 → P0–P3 风险与机会 → 行动计划 → 未来关注点）、正文以 `S1`、`S2`… 编号引用来源台账、结论附置信度。
-
-> 注意：这两份样例生成于较早版本，章节命名与当前 `references/report-template.md` 不完全一致，也尚未使用现在的 `claims.json` 逐项声明契约。**结构以当前模板与 `claims-ledger.md` 为准**，样例只用来看"成品应该长什么样、挖到多深"。
-
-全部样例仓库见 <https://github.com/demo-global-policy-intelligence>。
-
-> 样例不得复用：其中的公司、行业、地域、政策数字、结论与引用编号均不继承到新报告（见 `SKILL.md` 与 `references/quality-and-boundaries.md`）。
+样例只用于对照输出形态与深度，其中的公司、行业、地域、政策数字与结论均不继承到新报告。
 
 ## 安装
 
